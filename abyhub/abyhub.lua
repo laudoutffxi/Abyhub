@@ -1,6 +1,6 @@
 addon.name = 'abyhub'
 addon.author = 'Laudout'
-addon.version = '1.4.5'
+addon.version = '1.5.0'
 addon.desc = 'Combined Abyssea Key Item and Stagger tracker.'
 
 require('common')
@@ -593,6 +593,29 @@ local function save_lights()
     end)
 end
 
+-- Small persistent settings (lights bar on/off).
+state.lights_bar = { true }
+
+local function settings_file()
+    return ('%s/abyhub_settings.lua'):format(addon.path)
+end
+
+local function save_settings()
+    pcall(function()
+        local f = io.open(settings_file(), 'w')
+        if not f then return end
+        f:write(('return { lights_bar = %s }\n'):format(state.lights_bar[1] and 'true' or 'false'))
+        f:close()
+    end)
+end
+
+local function load_settings()
+    local ok, data = pcall(dofile, settings_file())
+    if ok and type(data) == 'table' and data.lights_bar ~= nil then
+        state.lights_bar[1] = data.lights_bar == true
+    end
+end
+
 local function load_lights()
     local name = player_name()
     if name == nil or name == state.lights_owner then return end
@@ -848,11 +871,23 @@ ashita.events.register('command', 'abyhub_command_cb', function(e)
         and root ~= '/aki'
         and root ~= '/abysseaki'
         and root ~= '/as'
-        and root ~= '/abystagger' then
+        and root ~= '/abystagger'
+        and root ~= '/abylights' then
         return
     end
 
     e.blocked = true
+
+    local function toggle_lights_bar()
+        state.lights_bar[1] = not state.lights_bar[1]
+        save_settings()
+        print(chat.header(addon.name):append(chat.message('Lights bar ' .. (state.lights_bar[1] and 'on.' or 'off.'))))
+    end
+
+    if root == '/abylights' then
+        toggle_lights_bar()
+        return
+    end
 
     if root == '/aki' or root == '/abysseaki' then
         state.tab = 1
@@ -893,8 +928,9 @@ ashita.events.register('command', 'abyhub_command_cb', function(e)
         local key = args[3] and args[3]:lower() or 'red'
         local anim = STAGGER_BY_KEY[key] or STAGGER_BY_KEY.red
         push_alert(STAGGER_TYPES[anim], 0, state.target ~= 'No target' and state.target or 'Test Fiend')
+    elseif cmd == 'lights' and (args[3] or ''):lower() ~= 'print' then
+        toggle_lights_bar()
     elseif cmd == 'lights' then
-        state.visible[1] = true
         local parts = {}
         for _, i in ipairs(LIGHT_DISPLAY_ORDER) do
             parts[#parts + 1] = ('%s %s%d'):format(LIGHTS[i].name, state.lights_approx[i] and '~' or '', state.lights[i])
@@ -910,7 +946,7 @@ ashita.events.register('command', 'abyhub_command_cb', function(e)
         state.compact[1] = not state.compact[1]
     else
         print(chat.header(addon.name):append(chat.message(
-            'Commands: /aby, /aby show, /aby hide, /aby ki, /aby stagger, /aby atma, /aby lights, /aby alerts [target|any|off], /aby testalert [red|yellow|blue], /aby all, /aby compact'
+            'Commands: /aby, /aby show, /aby hide, /aby ki, /aby stagger, /aby atma, /abylights (or /aby lights), /aby lights print, /aby alerts [target|any|off], /aby testalert [red|yellow|blue], /aby all, /aby compact'
         )))
     end
 end)
@@ -1607,6 +1643,12 @@ local function fmt_ago(t)
     return ('%dd ago'):format(math.floor(s / 86400))
 end
 
+local function mouse_over(x, y, w, h)
+    local ok, mx, my = pcall(imgui.GetMousePos)
+    if not ok or type(mx) ~= 'number' then return false end
+    return mx >= x and mx <= x + w and my >= y and my <= y + h
+end
+
 local function render_lights_bar()
     local here = in_abyssea()
     if not here and not state.lights_known then return end
@@ -1642,7 +1684,7 @@ local function render_lights_bar()
     local lx, ly = x + 10, y + 8
     text(lx, ly, here and HUD.accent2 or HUD.muted, 'LIGHTS')
     dot(lx + text_w('LIGHTS') + 8, ly + lh * 0.5, 3, status_col, any_approx and (0.4 + pulse(2) * 0.6) or nil)
-    local _, hov = hit('##lights_status', x, y, label_w + 10, h)
+    local hov = mouse_over(x, y, label_w + 10, h)
     if hov then imgui.SetTooltip(status .. (here and '' or '\n(last known - outside Abyssea)')) end
 
     local gx = x + 10 + label_w
@@ -1660,7 +1702,7 @@ local function render_lights_bar()
         local val = (state.lights_approx[i] and '~' or '') .. tostring(v)
         text(cx + cw - text_w(val), cy, full and HUD.gold or (v > 0 and HUD.text or HUD.faint), val)
         bar(cx, cy + lh + 2, cw, 3, v / def.cap, def.color)
-        local _, chov = hit(('##light_%d'):format(i), cx, cy, cw, cell_h - 2)
+        local chov = mouse_over(cx, cy, cw, cell_h - 2)
         if chov then
             imgui.SetTooltip(('%s light: %s%d / %d%s'):format(def.name, state.lights_approx[i] and '~' or '', v, def.cap,
                 state.lights_approx[i] and '\nEstimated - /heal to sync' or ''))
@@ -1971,6 +2013,14 @@ local function render_alerts()
     imgui.PopStyleVar(2)
 end
 
+-- Standalone floating lights window (toggle with /abylights).
+local function lights_width()
+    local cell = text_w('SILVERY') + text_w('~255') + 14
+    return text_w('LIGHTS') + 22 + 20 + 7 * cell + 6 * 10
+end
+
+local render_lights_window -- defined after push_style/pop_style
+
 local function push_style()
     imgui.PushStyleColor(ImGuiCol_WindowBg, HUD.window_bg)
     imgui.PushStyleColor(ImGuiCol_Border, { 0.30, 0.76, 1.00, 0.22 })
@@ -1996,12 +2046,36 @@ local function pop_style()
     imgui.PopStyleColor(10)
 end
 
+render_lights_window = function()
+    if not state.lights_bar[1] then return end
+    if not in_abyssea() and not state.lights_known then return end
+
+    push_style()
+    imgui.PushStyleVar(ImGuiStyleVar_WindowPadding, { 0, 0 })
+    imgui.PushStyleColor(ImGuiCol_WindowBg, { 0, 0, 0, 0 })
+    imgui.PushStyleColor(ImGuiCol_Border, { 0, 0, 0, 0 })
+    local flags = bit.bor(ImGuiWindowFlags_NoTitleBar, ImGuiWindowFlags_NoCollapse, ImGuiWindowFlags_AlwaysAutoResize,
+        ImGuiWindowFlags_NoScrollbar, ImGuiWindowFlags_NoFocusOnAppearing)
+    if imgui.Begin('Abyssea Lights##abyhub_lights', state.lights_bar, flags) then
+        local saved_cw, saved_left = ui.cw, ui.left_x
+        ui.left_x = imgui.GetCursorScreenPos()
+        ui.cw = lights_width()
+        render_lights_bar()
+        ui.cw, ui.left_x = saved_cw, saved_left
+    end
+    imgui.End()
+    imgui.PopStyleColor(2)
+    imgui.PopStyleVar(1)
+    pop_style()
+end
+
 ashita.events.register('d3d_present', 'abyhub_present_cb', function()
     update_vana_time()
     update_target()
     update_target_id()
     load_lights()
     render_alerts()
+    render_lights_window()
 
     if not state.visible[1] then return end
 
@@ -2019,7 +2093,6 @@ ashita.events.register('d3d_present', 'abyhub_present_cb', function()
         ui.left_x = imgui.GetCursorScreenPos()
         ui.cw = content_width()
         render_header()
-        render_lights_bar()
         if state.tab == 1 then
             render_key_items()
         elseif state.tab == 3 then
@@ -2035,6 +2108,7 @@ end)
 
 ashita.events.register('load', 'abyhub_load_cb', function()
     init_vana_time()
+    load_settings()
     print(chat.header(addon.name):append(chat.success(
         ('v%s loaded - combined Key Items + Staggers. Use /aby.'):format(addon.version)
     )))
