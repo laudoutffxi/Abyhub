@@ -202,8 +202,7 @@ local YELLOW = {
     {'Darksday', 'Dark', 'Drain, Aspir, Dispel, Bio II, Kurayami: Ni, Light Threnody, Eyes On Me'},
 };
 
--- Generated from LandSandBoat data/enums/key_item.yaml and scripts/globals/abyssea.lua
--- { key item id, name, NM that drops it or false, zone id or 0 }
+
 local ATMA = {
     { 1279, "Lion", "Hadhayosh", 132 },
     { 1280, "Stout Arm", "Briareus", 132 },
@@ -510,16 +509,7 @@ local function current_day()
     return weekdays[state.vana_weekday + 1] or 'Unknown day'
 end
 
---------------------------------------------------------------------------------
--- Abyssea lights
---
--- LandSandBoat keeps lights server-side. The client only learns about them from:
---   * 0x027 LIGHTS_MESSAGE_1 / _2 (/heal in Abyssea with Visitant, or a
---     Conflux Surveyor check)                                -> exact totals
---   * 0x02A BODY_EMITS_OFFSET + light (on gain)             -> intensity tier only
--- Exact totals are taken from the check; gains in between are estimated from the
--- tier and flagged with "~" until the next check.
---------------------------------------------------------------------------------
+
 
 -- Order matches xi.abyssea.lightType on the server.
 local LIGHTS = {
@@ -741,14 +731,7 @@ local function count_abyssites()
     return owned, total
 end
 
---------------------------------------------------------------------------------
--- Stagger alerts
---
--- LSB's mobutils::WeaknessTrigger sends a 0x028 action packet where the mob is
--- both actor and target, category 11 (MobSkillFinish), with a trigger animation:
---   1806 = red, 1807 = yellow, 1808 = blue, 1946 = white
--- The server also gives the mob 30s of Terror when a stagger lands.
---------------------------------------------------------------------------------
+
 
 local STAGGER_TYPES = {
     [1806] = { key = 'red',    label = 'RED STAGGER!!',    desc = 'Frozen in its tracks',          color = { 1.00, 0.30, 0.26, 1 } },
