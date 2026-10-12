@@ -1,6 +1,6 @@
 addon.name = 'abyhub'
 addon.author = 'Laudout'
-addon.version = '2.8.0'
+addon.version = '2.8.1'
 addon.desc = 'Abyssea + Empyrean toolkit: key items, staggers, atma, lights, Empyrean armour, NMs and weapons.'
 
 require('common')
@@ -2517,6 +2517,11 @@ ashita.events.register('d3d_present', 'abyhub_present_cb', function()
         win.set_size = false
     end
     place_window(win, win.size[1], win.size[2])
+    -- Scroll range = exactly what was drawn last frame, so scrolling stops at the
+    -- last panel instead of running on into empty space.
+    if win.content_h and type(imgui.SetNextWindowContentSize) == 'function' then
+        imgui.SetNextWindowContentSize({ 0, win.content_h })
+    end
 
     local flags = bit.bor(ImGuiWindowFlags_NoTitleBar, ImGuiWindowFlags_NoCollapse,
         ImGuiWindowFlags_NoMove, NO_DOCK)
