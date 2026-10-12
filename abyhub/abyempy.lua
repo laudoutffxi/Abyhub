@@ -12,6 +12,8 @@ local wdata = require('empyweapons')
 local icons = require('abyicons')
 -- Weapons view sizes: icons at the game's own 32px, text 20% larger than the other tabs.
 local WICON, WICON_HEAD, WTEXT = 32, 40, 1.2
+-- Armour cards: the NQ piece's icon next to the slot name.
+local ARMOR_ICON = 32
 
 local T = require('abytheme')
 local HUD, ui, CORNERS_ALL = T.HUD, T.ui, T.CORNERS_ALL
@@ -476,10 +478,21 @@ local function draw_piece(p, x, y, w, h)
     local name = ('%s  Lv.%d'):format(p.base.name, p.base.lv)
     local tag = ot >= 0 and TIER_NAME[ot] or 'NOT OWNED'
     local tag_c = ot >= 0 and TIER_COL[ot] or HUD.faint
-    card_title(px, py, pw, ot >= 0 and TIER_COL[ot] or HUD.muted, p.slot:upper(),
-        fit(name, pw - text_w(p.slot:upper()) - pill_w(tag) - 30))
-    pill(px + pw - pill_w(tag), py, tag, tag_c, ot == 2 and (0.12 + pulse(2) * 0.08) or 0.12)
-    py = py + lh + 8
+    -- NQ piece's icon (from the game's own item data) in front of the slot name
+    local row, tx = lh, px
+    local isz = ARMOR_ICON
+    if icons.get(p.base.id) then
+        icons.draw(p.base.id, px, py, isz, 1, ot >= 0 and TIER_COL[ot] or nil)
+        local _, hv = hit('##aicon_' .. p.slot, px, py, isz, isz)
+        if hv then imgui.SetTooltip(icons.name(p.base.id) or p.base.name) end
+        row, tx = isz, px + isz + 10
+    end
+    local ty = py + (row - lh) * 0.5
+    local tw = pw - (tx - px)
+    card_title(tx, ty, tw, ot >= 0 and TIER_COL[ot] or HUD.muted, p.slot:upper(),
+        fit(name, tw - text_w(p.slot:upper()) - pill_w(tag) - 30))
+    pill(px + pw - pill_w(tag), ty, tag, tag_c, ot == 2 and (0.12 + pulse(2) * 0.08) or 0.12)
+    py = py + row + 8
 
     if not state.compact then
         local vw = math.max(text_w('+100%'), text_w('BASE')) + 10
