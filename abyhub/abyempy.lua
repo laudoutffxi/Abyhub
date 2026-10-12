@@ -537,7 +537,7 @@ local function render_armor()
     text(tx, y + 8, HUD.text, cnt)
     tx = tx + text_w(cnt) + 12
     local cx = x + w - 10
-    local chip_x = cx - (text_w('Compact') + 34)
+    local chip_x = cx - T.toggle_w('Compact')
     local bw = chip_x - tx - 14
     bar(tx, y + sh * 0.5 - 2, bw, 4, d / math.max(1, t), d == t and HUD.owned or HUD.gold)
     local cc = toggle_chip('##empy_compact2', 'Compact', state.compact, chip_x, y + (sh - (lh + 10)) * 0.5, HUD.accent)
@@ -658,7 +658,7 @@ local function render_nms()
         if sp then state.slot = sp; save_settings() end
         local tiers = { { 0, 'BOTH' }, { 1, '+1 SEALS' }, { 2, '+2 ITEMS' } }
         local tx = x + sw + 14
-        DL():AddLine({ tx - 7, y + 5 }, { tx - 7, y + th - 5 }, col(HUD.edge, 0.5), 1)
+        DL():AddLine({ tx - 7, y + 5 }, { tx - 7, y + th - 5 }, col(HUD.edge, 0.18), 1)
         local tp = seg_tabs('empy_tier', tiers, state.tier, tx, y, HUD.accent, true)
         if tp then state.tier = tp; save_settings() end
         if here then
@@ -850,15 +850,15 @@ local function render_stages(here_zone)
         frame(tx, py, tw, th, { k = 5, fill = HUD.inset, glow = 0.3, alpha = 0.55 })
         -- header
         local hy = py + (rh - lh) * 0.5
-        text(c_no - 6, hy, HUD.accent2, 'TRIAL')
-        text(c_hold, hy, HUD.accent2, 'WEAPON')
-        text(c_obj, hy, HUD.accent2, 'OBJECTIVE')
-        rtext(c_end, hy, HUD.accent2, 'STATUS')
+        text(c_no - 6, hy, HUD.muted, 'TRIAL')
+        text(c_hold, hy, HUD.muted, 'WEAPON')
+        text(c_obj, hy, HUD.muted, 'OBJECTIVE')
+        rtext(c_end, hy, HUD.muted, 'STATUS')
         for _, dx in ipairs({ d1, d2, d3 }) do
-            dl:AddLine({ dx, py + 6 }, { dx, py + rh - 6 }, col(HUD.edge_hi, 0.6), 1.2)
-            dl:AddLine({ dx, py + rh }, { dx, py + th - 4 }, col(HUD.edge, 0.22), 1)
+            dl:AddLine({ dx, py + 6 }, { dx, py + rh - 6 }, col(HUD.edge, 0.14), 1)
+            dl:AddLine({ dx, py + rh }, { dx, py + th - 4 }, col(HUD.edge, 0.08), 1)
         end
-        dl:AddLine({ tx + 4, py + rh }, { tx + tw - 4, py + rh }, col(HUD.edge_hi, 0.55), 1)
+        dl:AddLine({ tx + 4, py + rh }, { tx + tw - 4, py + rh }, col(HUD.edge, 0.16), 1)
         local ry = py + rh
 
         local function row_bg(i, cur, hv)
@@ -1058,7 +1058,7 @@ function M.render()
             local sw = seg_width(sub, true)
             local sx, sy = x + tw + 22, y
             if sx + sw > jx - 12 then sx, sy = x, y + th + 6; h = th * 2 + 6 end
-            if sy == y then DL():AddLine({ sx - 11, y + 5 }, { sx - 11, y + th - 5 }, col(HUD.edge, 0.5), 1) end
+            if sy == y then DL():AddLine({ sx - 11, y + 5 }, { sx - 11, y + th - 5 }, col(HUD.edge, 0.18), 1) end
             local sp = seg_tabs('wtab', sub, state.wtab, sx, sy, HUD.gold, true)
             if sp and sp ~= state.wtab then state.wtab = sp; save_settings() end
         end

@@ -1,6 +1,6 @@
 # abyhub
 
-An Abyssea + Empyrean toolkit addon for **Ashita v4** (Final Fantasy XI), in a navy / blue framed theme.
+An Abyssea + Empyrean toolkit addon for **Ashita v4** (Final Fantasy XI), styled after YunaGearOpt (flat navy, periwinkle accent, Segoe UI).
 
 ## Install
 
@@ -28,7 +28,9 @@ To load it automatically, add `/addon load abyhub` to your Ashita startup script
 
 The **lights bar** (Abyssea lights and visitant time) is its own small window. It appears automatically when you enter an Abyssea zone and hides when you leave. `/abylights` turns that on or off.
 
-Drag either window by any empty part of it.
+The header shows the character you're logged in as (name plus main / sub job), so it's clear which character's data you're looking at.
+
+Drag either window by any empty part of it. Resize the main window from its bottom-right corner. It remembers its size, can't be made narrower than its layout needs, and can't be stretched past the game window. `/aby reset` re-centres it and fits it to the content again.
 
 ## Commands
 
@@ -42,7 +44,7 @@ Drag either window by any empty part of it.
 /aby all                      staggers: show every blue / yellow window
 /aby alerts [target|any|off]  stagger popups
 /aby test [red|yellow|blue|white]    test a stagger popup
-/aby reset                    re-centre the window
+/aby reset                    re-centre and re-fit the window
 /aby help                     list commands
 
 /abylights                    auto lights bar on / off
@@ -53,7 +55,8 @@ Drag either window by any empty part of it.
 
 - **Key item tabs:** these need key item data from the server. If a tab says *waiting for key item data*, zone once after loading the addon.
 - **Lights and visitant time:** read from `/heal` in Abyssea, and estimated between checks.
-- **Saved settings:** the addon writes `abyhub_settings.lua`, `abyhub_empyrean.lua` and `lights_<character>.lua` into its own folder. Delete them to reset.
+- **Saved settings:** the addon writes `abyhub_settings.lua` (tab, window size, lights bar), `abyhub_empyrean.lua` and `lights_<character>.lua` into its own folder. Delete them to reset.
+- **Font:** uses Segoe UI from your Windows Fonts folder (nothing is bundled). If it can't be loaded, the game's ImGui font is used.
 
 ## Files
 
