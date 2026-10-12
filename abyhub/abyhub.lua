@@ -1,6 +1,6 @@
 addon.name = 'abyhub'
 addon.author = 'Laudout'
-addon.version = '2.8.1'
+addon.version = '2.8.2'
 addon.desc = 'Abyssea + Empyrean toolkit: key items, staggers, atma, lights, Empyrean armour, NMs and weapons.'
 
 require('common')
@@ -11,6 +11,7 @@ local bit = require('bit')
 
 local T = require('abytheme')     -- shared drawing helpers (blue framed theme)
 local win_reset_request = false   -- set by /aby reset
+local win_debug_request = false   -- set by /aby debug
 
 -- Ashita's ImGui has docking turned on: dragging a window to the screen edge docks
 -- it and it gets stretched to fill the screen. abyhub's windows opt out of that.
@@ -1248,6 +1249,7 @@ local HELP = {
     '/aby alerts [target|any|off] stagger popups',
     '/aby test [red|yellow|blue|white]   test a stagger popup',
     '/aby reset                   re-centre the window',
+    '/aby debug                   print window / scroll sizes (for bug reports)',
     '/abylights                   lights bar on / off (shows by itself in Abyssea)',
     '/abylights print             lights to chat',
 }
@@ -1302,6 +1304,8 @@ ashita.events.register('command', 'abyhub_command_cb', function(e)
         state.visible[1] = true
     elseif sub == 'hide' then
         state.visible[1] = false
+    elseif sub == 'debug' then
+        win_debug_request = true
     elseif sub == 'reset' then
         win_reset_request = true
         state.visible[1] = true
@@ -2561,6 +2565,18 @@ ashita.events.register('d3d_present', 'abyhub_present_cb', function()
         T.end_content()
         local _, bottom = imgui.GetCursorScreenPos()
         win.content_h = math.max(60, bottom - top)
+        -- Never scroll further than the content: the last panel can sit at the
+        -- bottom edge, but there's no empty space below it.
+        local view_h = (tonumber(wh) or 0) - PAD_Y * 2
+        local max_scroll = math.max(0, win.content_h - view_h)
+        local sy = tonumber(call(imgui.GetScrollY)) or 0
+        if sy > max_scroll + 0.5 then pcall(imgui.SetScrollY, max_scroll) end
+        if win_debug_request then
+            win_debug_request = false
+            msg(('window %dx%d, content %d, scroll %d / imgui max %s, our max %d'):format(
+                tonumber(ww) or -1, tonumber(wh) or -1, win.content_h, sy,
+                tostring(call(imgui.GetScrollMaxY)), max_scroll))
+        end
         drag_window(win)
     end
 
