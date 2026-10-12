@@ -1,0 +1,4 @@
+# Per-player files abyhub writes at runtime
+abyhub/abyhub_settings.lua
+abyhub/abyhub_empyrean.lua
+abyhub/lights_*.lua
