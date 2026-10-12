@@ -464,7 +464,7 @@ local function draw_piece(p, x, y, w, h)
     local lh = line_h()
     local ot = owned_tier(p)
     card_bg(x, y, w, h, ot >= 0 and TIER_COL[ot] or nil, ot == 2 and 0.9 or 0.6)
-    dl:PushClipRect({ x, y }, { x + w, y + h }, true)
+    local clipped = T.push_clip(x, y, x + w, y + h)
 
     local px, py, pw = x + 12, y + 9, w - 24
     local name = ('%s  Lv.%d'):format(p.base.name, p.base.lv)
@@ -516,7 +516,7 @@ local function draw_piece(p, x, y, w, h)
     upgrade_line(px, py, pw, 2, p.up2, ot >= 2)
     py = py + lh + 4
 
-    dl:PopClipRect()
+    T.pop_clip(clipped)
     return (py - y) + 10
 end
 

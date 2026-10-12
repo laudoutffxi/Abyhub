@@ -168,6 +168,28 @@ local function rule(x, y, w, c, a)
     DL():AddRectFilled({ x, y }, { x + w, y + 1 }, col(C.line, 0.10 + 0.06 * (a or 0.6)))
 end
 
+-- Clip drawing to a box. Ashita's renderer goes blank for the rest of the frame
+-- if it's handed an empty clip rectangle, which is what ImGui produces when the
+-- box is scrolled completely out of view. So only clip when the box is actually
+-- inside the window; off-screen boxes are hidden by the window's own clipping.
+-- Returns true if a clip rect was pushed (pass it to pop_clip).
+local CLIP_MARGIN = 8
+local function push_clip(x1, y1, x2, y2)
+    local wx, wy = imgui.GetWindowPos()
+    local ww, wh = imgui.GetWindowSize()
+    wx, wy, ww, wh = tonumber(wx), tonumber(wy), tonumber(ww), tonumber(wh)
+    if not (wx and wy and ww and wh) then return false end
+    local ix1, iy1 = math.max(x1, wx + CLIP_MARGIN), math.max(y1, wy + CLIP_MARGIN)
+    local ix2, iy2 = math.min(x2, wx + ww - CLIP_MARGIN), math.min(y2, wy + wh - CLIP_MARGIN)
+    if ix2 - ix1 < 1 or iy2 - iy1 < 1 then return false end
+    DL():PushClipRect({ x1, y1 }, { x2, y2 }, true)
+    return true
+end
+
+local function pop_clip(pushed)
+    if pushed then DL():PopClipRect() end
+end
+
 local function hit(id, x, y, w, h)
     local cx, cy = imgui.GetCursorScreenPos()
     imgui.SetCursorScreenPos({ x, y })
@@ -439,6 +461,7 @@ return {
     text = text, rtext = rtext, fit = fit, dot = dot, diamond = diamond,
     chamfer_fill = chamfer_fill, chamfer_line = chamfer_line, frame = frame,
     pill_w = pill_w, pill = pill, bar = bar, card_bg = card_bg, card_title = card_title, rule = rule,
+    push_clip = push_clip, pop_clip = pop_clip,
     hit = hit, advance = advance, avail_w = avail_w, begin_content = begin_content, end_content = end_content,
     seg_tabs = seg_tabs, seg_width = seg_width, toggle_chip = toggle_chip, toggle_w = toggle_w, panel = panel, band = band,
     title_w = title_w, title_text = title_text, logo = logo, close_button = close_button,
