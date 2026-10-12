@@ -1,13 +1,95 @@
 addon.name = 'abyhub'
 addon.author = 'Laudout'
-addon.version = '1.5.0'
-addon.desc = 'Combined Abyssea Key Item and Stagger tracker.'
+addon.version = '2.4.0'
+addon.desc = 'Abyssea + Empyrean toolkit: key items, staggers, atma, lights, Empyrean armour, NMs and weapons.'
 
 require('common')
 
 local chat = require('chat')
 local imgui = require('imgui')
 local bit = require('bit')
+
+local T = require('abytheme')     -- shared drawing helpers (blue framed theme)
+local win_reset_request = false   -- set by /aby reset
+
+-- Ashita's ImGui has docking turned on: dragging a window to the screen edge docks
+-- it and it gets stretched to fill the screen. abyhub's windows opt out of that.
+local NO_DOCK = ImGuiWindowFlags_NoDocking or 0
+local function undock_next()
+    -- If an earlier session left the window docked (saved in imgui.ini), pull it out.
+    if type(imgui.SetNextWindowDockID) == 'function' then
+        pcall(imgui.SetNextWindowDockID, 0, ImGuiCond_Always)
+    end
+end
+
+-- Ashita's ImGui also has multi-viewports: a window dragged past the edge of the
+-- game window becomes its own OS window, which Ashita draws stretched over the
+-- whole screen. So every abyhub window is pinned to the game's main viewport and
+-- kept inside it (it stops at the edge instead of crossing it).
+local function main_viewport()
+    local ok, vp = pcall(imgui.GetMainViewport)
+    if ok and vp then
+        local ok2, r = pcall(function()
+            return { vp.Pos.x, vp.Pos.y, vp.Size.x, vp.Size.y, vp.ID }
+        end)
+        if ok2 and r and tonumber(r[3]) and r[3] > 0 then return r end
+    end
+    local io_ok, io = pcall(imgui.GetIO)
+    local w = (io_ok and io and io.DisplaySize and io.DisplaySize.x) or 1920
+    local h = (io_ok and io and io.DisplaySize and io.DisplaySize.y) or 1080
+    return { 0, 0, w, h, nil }
+end
+
+-- abyhub moves its own windows (ImGui's dragging is switched off with NoMove).
+-- ImGui's drag lets a window cross the game window's edge, which is what turns it
+-- into a separate OS window; doing the drag here, the window simply stops at the
+-- edge. st = { pos = {x, y}, drag = {...} } per window.
+
+local function clamp_pos(x, y, w, h)
+    local vp = main_viewport()
+    x = math.max(vp[1], math.min(x, vp[1] + vp[3] - w))
+    y = math.max(vp[2], math.min(y, vp[2] + vp[4] - h))
+    return x, y
+end
+
+-- Before Begin: keep the window in the game's viewport, at our position.
+local function place_window(st, w, h)
+    local vp = main_viewport()
+    if vp[5] ~= nil and type(imgui.SetNextWindowViewport) == 'function' then
+        pcall(imgui.SetNextWindowViewport, vp[5])
+    end
+    if st.pos then
+        st.pos[1], st.pos[2] = clamp_pos(st.pos[1], st.pos[2], w, h)
+        imgui.SetNextWindowPos({ st.pos[1], st.pos[2] }, ImGuiCond_Always)
+    end
+end
+
+local function call(fn, ...)
+    if type(fn) ~= 'function' then return nil end
+    local ok, a, b = pcall(fn, ...)
+    if ok then return a, b end
+    return nil
+end
+
+-- Inside the window, after its contents: start / continue / end a drag. A drag
+-- starts on any empty part of the window (not on a tab, button or row).
+local function drag_window(st)
+    local wx, wy = call(imgui.GetWindowPos)
+    if not st.pos and tonumber(wx) then st.pos = { wx, wy } end
+    local mx, my = call(imgui.GetMousePos)
+    if not tonumber(mx) or not tonumber(my) then return end
+    if st.drag then
+        if call(imgui.IsMouseDown, 0) then
+            st.pos = { st.drag[3] + (mx - st.drag[1]), st.drag[4] + (my - st.drag[2]) }
+        else
+            st.drag = nil
+        end
+    elseif call(imgui.IsMouseClicked, 0) and call(imgui.IsWindowHovered) and not call(imgui.IsAnyItemHovered) then
+        st.drag = { mx, my, st.pos and st.pos[1] or wx, st.pos and st.pos[2] or wy }
+    end
+end
+
+local empy = require('abyempy')   -- Empyrean tab (armour, NMs, weapon trials)
 
 local state = {
     visible = { false },
@@ -202,7 +284,8 @@ local YELLOW = {
     {'Darksday', 'Dark', 'Drain, Aspir, Dispel, Bio II, Kurayami: Ni, Light Threnody, Eyes On Me'},
 };
 
-
+-- Generated from LandSandBoat data/enums/key_item.yaml and scripts/globals/abyssea.lua
+-- { key item id, name, NM that drops it or false, zone id or 0 }
 local ATMA = {
     { 1279, "Lion", "Hadhayosh", 132 },
     { 1280, "Stout Arm", "Briareus", 132 },
@@ -509,7 +592,16 @@ local function current_day()
     return weekdays[state.vana_weekday + 1] or 'Unknown day'
 end
 
-
+--------------------------------------------------------------------------------
+-- Abyssea lights
+--
+-- LandSandBoat keeps lights server-side. The client only learns about them from:
+--   * 0x027 LIGHTS_MESSAGE_1 / _2 (/heal in Abyssea with Visitant, or a
+--     Conflux Surveyor check)                                -> exact totals
+--   * 0x02A BODY_EMITS_OFFSET + light (on gain)             -> intensity tier only
+-- Exact totals are taken from the check; gains in between are estimated from the
+-- tier and flagged with "~" until the next check.
+--------------------------------------------------------------------------------
 
 -- Order matches xi.abyssea.lightType on the server.
 local LIGHTS = {
@@ -547,6 +639,8 @@ state.lights_known = false      -- any data at all (check or saved)
 state.lights_approx = {}        -- [index] = true when estimated since last check
 state.lights_checked = nil      -- os.time() of last exact check
 state.lights_owner = nil        -- character name the values belong to
+state.visitant_end = nil        -- os.time() when visitant status runs out
+state.visitant_exact = false    -- true when read to the second (final countdown)
 
 local function player_zone()
     local party = AshitaCore:GetMemoryManager():GetParty()
@@ -577,8 +671,9 @@ local function save_lights()
         if not f then return end
         local approx = {}
         for i = 1, 7 do approx[i] = state.lights_approx[i] and 'true' or 'false' end
-        f:write(('return { values = { %s }, approx = { %s }, checked = %s }\n'):format(
-            table.concat(state.lights, ', '), table.concat(approx, ', '), tostring(state.lights_checked or 'nil')))
+        f:write(('return { values = { %s }, approx = { %s }, checked = %s, visitant_end = %s }\n'):format(
+            table.concat(state.lights, ', '), table.concat(approx, ', '), tostring(state.lights_checked or 'nil'),
+            tostring(state.visitant_end or 'nil')))
         f:close()
     end)
 end
@@ -594,15 +689,16 @@ local function save_settings()
     pcall(function()
         local f = io.open(settings_file(), 'w')
         if not f then return end
-        f:write(('return { lights_bar = %s }\n'):format(state.lights_bar[1] and 'true' or 'false'))
+        f:write(('return { lights_bar = %s, tab = %d }\n'):format(state.lights_bar[1] and 'true' or 'false', state.tab or 1))
         f:close()
     end)
 end
 
 local function load_settings()
     local ok, data = pcall(dofile, settings_file())
-    if ok and type(data) == 'table' and data.lights_bar ~= nil then
-        state.lights_bar[1] = data.lights_bar == true
+    if ok and type(data) == 'table' then
+        if data.lights_bar ~= nil then state.lights_bar[1] = data.lights_bar == true end
+        if tonumber(data.tab) and data.tab >= 1 and data.tab <= 4 then state.tab = data.tab end
     end
 end
 
@@ -621,6 +717,7 @@ local function load_lights()
             state.lights_approx[i] = data.approx and data.approx[i] == true or nil
         end
         state.lights_checked = tonumber(data.checked)
+        state.visitant_end = tonumber(data.visitant_end)
         state.lights_known = true
     end
 end
@@ -647,9 +744,24 @@ local function read_u16_packet(b, offset)
     return (b[i] or 0) + ((b[i + 1] or 0) * 0x100)
 end
 
+-- Message IDs differ between LSB versions. If the built-in BODY_EMITS id does
+-- not match, the chat text fallback below still counts the gain and teaches us
+-- the server's real id for this zone, so later gains are read from the packet.
+local learned_ids = {}          -- [zone] = { m1, m2, emits }
+local last_unmatched_02a = nil  -- { mes, tier, t }
+local last_packet_gain = nil    -- { index, t }
+
+local function zone_light_ids(z)
+    local base = ABYSSEA_ZONES[z]
+    if not base then return nil end
+    local l = learned_ids[z]
+    if not l then return base end
+    return { l[1] or base[1], l[2] or base[2], l[3] or base[3] }
+end
+
 local function capture_lights_packet(e)
     if e.id ~= 0x027 and e.id ~= 0x02A then return end
-    local ids = ABYSSEA_ZONES[player_zone()]
+    local ids = zone_light_ids(player_zone())
     if not ids then return end
 
     local b = e.data:bytes()
@@ -675,10 +787,14 @@ local function capture_lights_packet(e)
     else
         -- GP_SERV_COMMAND_TALKNUMWORK: num[4] @0x08, MesNum @0x1A
         local mes = bit.band(read_u16_packet(b, 0x1A), 0x7FFF)
+        local tier = read_u32_packet(b, 0x08)
         local offset = mes - ids[3]
-        if offset >= 0 and offset <= 6 then
-            add_estimated(offset + 1, read_u32_packet(b, 0x08))
+        if offset >= 0 and offset <= 6 and tier <= 4 then
+            add_estimated(offset + 1, tier)
+            last_packet_gain = { index = offset + 1, t = os.clock() }
             save_lights()
+        else
+            last_unmatched_02a = { mes = mes, tier = tier, t = os.clock() }
         end
     end
 end
@@ -689,10 +805,85 @@ local TEXT_LIGHTS = {
     { 'azure', 5 }, { 'ruby', 6 }, { 'amber', 7 },
 }
 
+-- "<name>'s body emits a faint pearlescent light!"
+local TIER_WORDS = { faint = 0, mild = 1, strong = 2 }
+local LIGHT_WORD_INDEX = {}
+for _, t in ipairs(TEXT_LIGHTS) do LIGHT_WORD_INDEX[t[1]] = t[2] end
+
+local function capture_light_gain_text(lower)
+    local who, tierw, colour = lower:match("([%a]+)'s body emits an? (%a+) (%a+) light")
+    if not who then return false end
+    local index = LIGHT_WORD_INDEX[colour]
+    if not index then return false end
+    local me = player_name()
+    if me and who ~= me:lower() then return true end -- someone else's light
+
+    local now = os.clock()
+    -- Already counted from the packet a moment ago?
+    if last_packet_gain and last_packet_gain.index == index and now - last_packet_gain.t < 1.0 then
+        return true
+    end
+    local tier = TIER_WORDS[tierw] or math.min(4, LIGHTS[index].max_tier)
+    -- Learn the server's real BODY_EMITS id from the packet that carried this text.
+    if last_unmatched_02a and now - last_unmatched_02a.t < 1.0 then
+        local z = player_zone()
+        learned_ids[z] = learned_ids[z] or {}
+        learned_ids[z][3] = last_unmatched_02a.mes - (index - 1)
+        if last_unmatched_02a.tier <= 4 then tier = last_unmatched_02a.tier end
+        last_unmatched_02a = nil
+    end
+    add_estimated(index, tier)
+    save_lights()
+    return true
+end
+
+-- Visitant time. LSB hides the buff timer, so the client only learns it from chat:
+--   /heal                 "Your visitant status will wear off in 27 minutes."   (whole minutes)
+--   warnings              "... wear off in 5 minutes / 30 seconds ..."
+--   Sturdy Pyxis etc.     "... extended by 10 minutes."
+local function capture_visitant_text(lower)
+    if not lower:find('visitant', 1, true) and not lower:find('extended by', 1, true) then return false end
+    local now = os.time()
+    local n, unit = lower:match('wear off in (%d+) (%a+)')
+    if n then
+        n = tonumber(n)
+        if unit:sub(1, 3) == 'min' then
+            -- /heal reports whole minutes (rounded down). Countdown warnings fire right
+            -- at 5/4/3/2/1 minutes, so only pad the bigger numbers.
+            state.visitant_end = now + n * 60 + (n > 5 and 30 or 0)
+            state.visitant_exact = false
+        else
+            state.visitant_end = now + n
+            state.visitant_exact = true
+        end
+        save_lights()
+        return true
+    end
+    local add, aunit = lower:match('extended by (%d+) (%a+)')
+    if add and state.visitant_end then
+        add = tonumber(add) * ((aunit:sub(1, 3) == 'min') and 60 or 1)
+        state.visitant_end = math.max(state.visitant_end, now) + add
+        save_lights()
+        return true
+    end
+    if lower:find('visitant status', 1, true) and (lower:find('wore off', 1, true) or lower:find('worn off', 1, true)) then
+        state.visitant_end = now
+        state.visitant_exact = true
+        save_lights()
+        return true
+    end
+    return false
+end
+
 local function capture_lights_text(e)
     local msg = e.message
     if type(msg) ~= 'string' or not in_abyssea() then return end
     local lower = msg:lower()
+    if capture_visitant_text(lower) then return end
+    if lower:find('body emits', 1, true) then
+        capture_light_gain_text(lower)
+        return
+    end
     local found = 0
     for _, t in ipairs(TEXT_LIGHTS) do
         local v = lower:match(t[1] .. '%s*:%s*(%d+)')
@@ -731,7 +922,14 @@ local function count_abyssites()
     return owned, total
 end
 
-
+--------------------------------------------------------------------------------
+-- Stagger alerts
+--
+-- LSB's mobutils::WeaknessTrigger sends a 0x028 action packet where the mob is
+-- both actor and target, category 11 (MobSkillFinish), with a trigger animation:
+--   1806 = red, 1807 = yellow, 1808 = blue, 1946 = white
+-- The server also gives the mob 30s of Terror when a stagger lands.
+--------------------------------------------------------------------------------
 
 local STAGGER_TYPES = {
     [1806] = { key = 'red',    label = 'RED STAGGER!!',    desc = 'Frozen in its tracks',          color = { 1.00, 0.30, 0.26, 1 } },
@@ -777,17 +975,6 @@ local function entity_name_by_id(server_id)
     end)
     if ok and name and name ~= '' then return name end
     return 'Target'
-end
-
-local function entity_hpp_by_id(server_id)
-    local ok, hpp = pcall(function()
-        local em = AshitaCore:GetMemoryManager():GetEntity()
-        local index = bit.band(server_id, 0xFFF)
-        if (tonumber(em:GetServerId(index)) or 0) ~= server_id then return nil end
-        return tonumber(em:GetHPPercent(index))
-    end)
-    if ok then return hpp end
-    return nil
 end
 
 local function push_alert(def, mob_id, mob_name)
@@ -843,120 +1030,120 @@ ashita.events.register('text_in', 'abyhub_text_cb', function(e)
     capture_lights_text(e)
 end)
 
+-- Commands: /aby [...] and /abylights [...]
+local HELP = {
+    '/aby                         show / hide the window',
+    '/aby ki | stagger | atma | empyrean    open a tab',
+    '/aby armor | nms | weapons [stages|completed]    Empyrean views',
+    '/aby job <JOB|auto>          Empyrean: show a job (auto = main job)',
+    '/aby refresh                 Empyrean: rescan bags now',
+    '/aby compact                 compact view (staggers / armour)',
+    '/aby all                     staggers: show every blue / yellow window',
+    '/aby alerts [target|any|off] stagger popups',
+    '/aby test [red|yellow|blue|white]   test a stagger popup',
+    '/aby reset                   re-centre the window',
+    '/abylights                   lights bar on / off',
+    '/abylights print             lights to chat',
+}
+
+local function msg(s) print(chat.header(addon.name):append(chat.message(s))) end
+
 ashita.events.register('command', 'abyhub_command_cb', function(e)
     local args = e.command:args()
     if #args == 0 then return end
-
     local root = args[1]:lower()
-
-    if root ~= '/aby'
-        and root ~= '/abyssea'
-        and root ~= '/aki'
-        and root ~= '/abysseaki'
-        and root ~= '/as'
-        and root ~= '/abystagger'
-        and root ~= '/abylights' then
-        return
-    end
-
+    if root ~= '/aby' and root ~= '/abylights' then return end
     e.blocked = true
 
-    local function toggle_lights_bar()
-        state.lights_bar[1] = not state.lights_bar[1]
-        save_settings()
-        print(chat.header(addon.name):append(chat.message('Lights bar ' .. (state.lights_bar[1] and 'on.' or 'off.'))))
-    end
+    local sub = (args[2] or ''):lower()
 
+    -- /abylights [print]
     if root == '/abylights' then
-        toggle_lights_bar()
+        if sub == 'print' then
+            local parts = {}
+            for _, i in ipairs(LIGHT_DISPLAY_ORDER) do
+                parts[#parts + 1] = ('%s %s%d'):format(LIGHTS[i].name, state.lights_approx[i] and '~' or '', state.lights[i])
+            end
+            msg(table.concat(parts, ' | '))
+        elseif sub == 'debug' then
+            local z = player_zone()
+            local ids = zone_light_ids(z)
+            msg(('Zone %d  light msg ids: %s  learned: %s  last unmatched 0x02A: %s'):format(
+                z, ids and table.concat(ids, '/') or 'not Abyssea',
+                learned_ids[z] and tostring(learned_ids[z][3]) or 'no',
+                last_unmatched_02a and ('%d (tier %d, %.0fs ago)'):format(last_unmatched_02a.mes, last_unmatched_02a.tier, os.clock() - last_unmatched_02a.t) or 'none'))
+        else
+            state.lights_bar[1] = not state.lights_bar[1]
+            save_settings()
+            msg('Lights bar ' .. (state.lights_bar[1] and 'on.' or 'off.'))
+        end
         return
     end
 
-    if root == '/aki' or root == '/abysseaki' then
-        state.tab = 1
-    elseif root == '/as' or root == '/abystagger' then
-        state.tab = 2
+    local function open(tab)
+        state.tab = tab
+        state.visible[1] = true
+        save_settings()
     end
 
-    if #args == 1 then
+    -- Empyrean views / options (handled by abyempy.lua)
+    local rest = {}
+    for i = 2, #args do rest[#rest + 1] = args[i] end
+
+    if sub == '' then
         state.visible[1] = not state.visible[1]
-        return
-    end
-
-    local cmd = args[2]:lower()
-
-    if cmd == 'show' then
+    elseif sub == 'show' then
         state.visible[1] = true
-    elseif cmd == 'hide' then
+    elseif sub == 'hide' then
         state.visible[1] = false
-    elseif cmd == 'ki' or cmd == 'keyitems' then
-        state.tab = 1
+    elseif sub == 'reset' then
+        win_reset_request = true
         state.visible[1] = true
-    elseif cmd == 'stagger' or cmd == 'staggers' then
-        state.tab = 2
+    elseif sub == 'ki' or sub == 'keyitems' then
+        open(1)
+    elseif sub == 'stagger' or sub == 'staggers' then
+        open(2)
+    elseif sub == 'atma' or sub == 'abyssites' then
+        open(3)
+    elseif sub == 'empyrean' or sub == 'empy' then
+        open(4)
+    elseif sub == 'armor' or sub == 'armour' or sub == 'nms' or sub == 'weapons' or sub == 'job' or sub == 'refresh' then
+        if empy.command(rest) then open(4) end
+    elseif sub == 'compact' then
+        if state.tab == 4 then
+            empy.command({ 'compact' })
+        else
+            state.compact[1] = not state.compact[1]
+        end
         state.visible[1] = true
-    elseif cmd == 'atma' or cmd == 'abyssite' or cmd == 'abyssites' then
-        state.tab = 3
-        state.visible[1] = true
-    elseif cmd == 'alerts' or cmd == 'popups' then
-        local want = args[3] and args[3]:lower()
+    elseif sub == 'all' then
+        state.show_all[1] = not state.show_all[1]
+        open(2)
+    elseif sub == 'alerts' then
+        local want = (args[3] or ''):lower()
         if want == 'target' or want == 'any' or want == 'off' then
             state.alert_mode = want
         else
             local nxt = { target = 'any', any = 'off', off = 'target' }
             state.alert_mode = nxt[state.alert_mode] or 'target'
         end
-        print(chat.header(addon.name):append(chat.message('Stagger popups: ' .. state.alert_mode)))
-    elseif cmd == 'testalert' or cmd == 'test' then
-        local key = args[3] and args[3]:lower() or 'red'
+        msg('Stagger popups: ' .. state.alert_mode)
+    elseif sub == 'test' then
+        local key = (args[3] or 'red'):lower()
         local anim = STAGGER_BY_KEY[key] or STAGGER_BY_KEY.red
         push_alert(STAGGER_TYPES[anim], 0, state.target ~= 'No target' and state.target or 'Test Fiend')
-    elseif cmd == 'lights' and (args[3] or ''):lower() ~= 'print' then
-        toggle_lights_bar()
-    elseif cmd == 'lights' then
-        local parts = {}
-        for _, i in ipairs(LIGHT_DISPLAY_ORDER) do
-            parts[#parts + 1] = ('%s %s%d'):format(LIGHTS[i].name, state.lights_approx[i] and '~' or '', state.lights[i])
-        end
-        print(chat.header(addon.name):append(chat.message(table.concat(parts, ' | '))))
-    elseif cmd == 'all' then
-        state.tab = 2
-        state.visible[1] = true
-        state.show_all[1] = not state.show_all[1]
-    elseif cmd == 'compact' then
-        state.tab = 2
-        state.visible[1] = true
-        state.compact[1] = not state.compact[1]
     else
-        print(chat.header(addon.name):append(chat.message(
-            'Commands: /aby, /aby show, /aby hide, /aby ki, /aby stagger, /aby atma, /abylights (or /aby lights), /aby lights print, /aby alerts [target|any|off], /aby testalert [red|yellow|blue], /aby all, /aby compact'
-        )))
+        msg('Commands:')
+        for _, l in ipairs(HELP) do msg('  ' .. l) end
     end
 end)
+
 
 --------------------------------------------------------------------------------
 -- UI
 --------------------------------------------------------------------------------
 
-local HUD = {
-    accent      = { 0.30, 0.76, 1.00, 1.00 },
-    accent2     = { 0.48, 0.86, 1.00, 1.00 },
-    text        = { 0.94, 0.95, 0.98, 1.00 },
-    subtext     = { 0.72, 0.76, 0.82, 1.00 },
-    muted       = { 0.52, 0.57, 0.65, 1.00 },
-    faint       = { 0.34, 0.39, 0.46, 1.00 },
-    owned       = { 0.40, 0.95, 0.58, 1.00 },
-    warn        = { 1.00, 0.68, 0.28, 1.00 },
-    gold        = { 1.00, 0.80, 0.36, 1.00 },
-    red         = { 1.00, 0.38, 0.32, 1.00 },
-    blue        = { 0.40, 0.66, 1.00, 1.00 },
-    yellow      = { 1.00, 0.84, 0.26, 1.00 },
-    window_bg   = { 0.028, 0.036, 0.052, 0.96 },
-    header_bg   = { 0.042, 0.068, 0.100, 1.00 },
-    card        = { 0.062, 0.076, 0.104, 0.97 },
-    card_line   = { 1.00, 1.00, 1.00, 0.07 },
-    track       = { 1.00, 1.00, 1.00, 0.08 },
-}
+local HUD, ui, CORNERS_ALL = T.HUD, T.ui, T.CORNERS_ALL
 
 local ELEMENT_COLOR = {
     Fire = { 1.00, 0.42, 0.24, 1 }, Ice = { 0.58, 0.84, 1.00, 1 }, Wind = { 0.40, 0.94, 0.62, 1 },
@@ -972,77 +1159,11 @@ local DAY_ELEMENT = {
     Iceday = 'Ice', Lightningday = 'Lightning', Lightsday = 'Light', Darksday = 'Dark',
 }
 
-local ui = { h = {} }
-
-local CORNERS_ALL = ImDrawFlags_RoundCornersAll or ImDrawCornerFlags_All or 15
-
-local function rgba(c, a) return { c[1], c[2], c[3], a or c[4] } end
-local function col(c, a) return imgui.GetColorU32(rgba(c, a)) end
-local function pulse(speed) return (math.sin(os.clock() * (speed or 3.0)) + 1.0) * 0.5 end
-local function line_h() return tonumber(imgui.GetTextLineHeight()) or 13 end
-local function text_w(s) return tonumber((imgui.CalcTextSize(s))) or 0 end
-local function DL() return imgui.GetWindowDrawList() end
-
-local function text(x, y, c, s, scale)
-    local dl = DL()
-    if scale and scale ~= 1 and type(imgui.GetFont) == 'function' and type(imgui.GetFontSize) == 'function' then
-        local ok = pcall(function() dl:AddText(imgui.GetFont(), imgui.GetFontSize() * scale, { x, y }, col(c), s) end)
-        if ok then return end
-    end
-    dl:AddText({ x, y }, col(c), s)
-end
-
-local function dot(cx, cy, r, c, glow)
-    local dl = DL()
-    if glow and glow > 0 then
-        dl:AddCircleFilled({ cx, cy }, r * 2.4, col(c, 0.10 * glow), 20)
-        dl:AddCircleFilled({ cx, cy }, r * 1.6, col(c, 0.22 * glow), 20)
-    end
-    dl:AddCircleFilled({ cx, cy }, r, col(c), 16)
-end
-
-local function pill_w(s) return text_w(s) + 14 end
-
-local function pill(x, y, s, c, fill)
-    local dl = DL()
-    local w, h = pill_w(s), line_h() + 3
-    local top = y - 1.5
-    dl:AddRectFilled({ x, top }, { x + w, top + h }, col(c, fill or 0.15), h * 0.5)
-    dl:AddRect({ x, top }, { x + w, top + h }, col(c, 0.50), h * 0.5, CORNERS_ALL, 1.0)
-    dl:AddText({ x + 7, y }, col(c), s)
-    return w
-end
-
-local function bar(x, y, w, h, frac, c)
-    local dl = DL()
-    frac = math.max(0, math.min(1, frac))
-    dl:AddRectFilled({ x, y }, { x + w, y + h }, col(HUD.track), h * 0.5)
-    if frac > 0 then
-        dl:AddRectFilled({ x, y }, { x + math.max(h, w * frac), y + h }, col(c, 0.9), h * 0.5)
-    end
-end
-
-local function card_bg(x, y, w, h, accent, strength)
-    local dl = DL()
-    dl:AddRectFilled({ x, y }, { x + w, y + h }, col(HUD.card), 8)
-    if accent then
-        dl:AddRectFilledMultiColor({ x + 1, y + 1 }, { x + w * 0.6, y + h - 1 },
-            col(accent, 0.07 * (strength or 1)), col(accent, 0), col(accent, 0), col(accent, 0.03 * (strength or 1)))
-        dl:AddRect({ x, y }, { x + w, y + h }, col(accent, 0.28 * (strength or 1)), 8, CORNERS_ALL, 1.0)
-    else
-        dl:AddRect({ x, y }, { x + w, y + h }, col(HUD.card_line), 8, CORNERS_ALL, 1.0)
-    end
-end
-
--- Title row used by every panel: stripe, title, optional subtitle and right-side text.
-local function card_title(x, y, w, c, title, sub, right, right_col)
-    local dl = DL()
-    local lh = line_h()
-    dl:AddRectFilled({ x, y + 2 }, { x + 3, y + lh - 2 }, col(c), 1.5)
-    text(x + 10, y, c, title)
-    if sub then text(x + 10 + text_w(title) + 10, y, HUD.muted, sub) end
-    if right then text(x + w - text_w(right), y, right_col or HUD.faint, right) end
-end
+local rgba, col, pulse, line_h, text_w, DL = T.rgba, T.col, T.pulse, T.line_h, T.text_w, T.DL
+local text, rtext, fit, dot, diamond = T.text, T.rtext, T.fit, T.dot, T.diamond
+local frame, pill_w, pill, bar, card_bg, card_title = T.frame, T.pill_w, T.pill, T.bar, T.card_bg, T.card_title
+local hit, advance, avail_w = T.hit, T.advance, T.avail_w
+local seg_tabs, seg_width, toggle_chip, panel, band = T.seg_tabs, T.seg_width, T.toggle_chip, T.panel, T.band
 
 local function fmt_earth(seconds)
     seconds = math.max(0, math.floor(seconds + 0.5))
@@ -1052,33 +1173,9 @@ local function fmt_earth(seconds)
     return ('%dm %02ds'):format(math.floor(seconds / 60), seconds % 60)
 end
 
--- Click target placed at an absolute position; leaves the layout cursor alone.
-local function hit(id, x, y, w, h)
-    local cx, cy = imgui.GetCursorScreenPos()
-    imgui.SetCursorScreenPos({ x, y })
-    local clicked = imgui.InvisibleButton(id, { w, h })
-    local hov = imgui.IsItemHovered()
-    if hov then imgui.SetMouseCursor(ImGuiMouseCursor_Hand) end
-    imgui.SetCursorScreenPos({ cx, cy })
-    return clicked, hov
-end
-
--- Reserve a block of the given height at the current cursor.
-local function advance(w, h)
-    imgui.Dummy({ w, h })
-end
-
 --------------------------------------------------------------------------------
 -- Header + tabs
 --------------------------------------------------------------------------------
-
--- Fixed layout width: the window auto-sizes around content laid out to this width.
-ui.cw = ui.cw or 760
-ui.left_x = ui.left_x or 0
-local function avail_w()
-    local cx = imgui.GetCursorScreenPos()
-    return ui.cw - (cx - ui.left_x)
-end
 
 -- Width the content needs: one-row header, three key item columns, readable lists.
 local function content_width()
@@ -1088,48 +1185,12 @@ local function content_width()
         for _, ki in ipairs(area.kis) do longest = math.max(longest, text_w(ki[2])) end
     end
     local ki_need = 3 * (longest + 44) + 20
-    return math.max(ui.header_need or 0, ki_need, 64 * u)
-end
-
--- Segmented tab strip. items = { { key, label, badge }, ... }
--- Returns the clicked key (or nil), the strip width and height.
-local function seg_tabs(id, items, active, x, y, color, small)
-    local dl = DL()
-    local lh = line_h()
-    local th = lh + (small and 6 or 8)
-    local pad = small and 9 or 11
-    local tx = x
-    local clicked_key = nil
-    for _, t in ipairs(items) do
-        local key, label, badge = t[1], t[2], t[3]
-        local on = active == key
-        local tw = text_w(label) + (badge and (text_w(badge) + 8) or 0) + pad * 2
-        local clicked, hov = hit(('##%s_%s'):format(id, tostring(key)), tx, y, tw, th)
-        if clicked then clicked_key = key end
-        if on then
-            dl:AddRectFilled({ tx, y }, { tx + tw, y + th }, col(color, 0.16), 5)
-            dl:AddRect({ tx, y }, { tx + tw, y + th }, col(color, 0.55), 5, CORNERS_ALL, 1.0)
-        elseif hov then
-            dl:AddRectFilled({ tx, y }, { tx + tw, y + th }, col(HUD.text, 0.06), 5)
-        end
-        local ty = y + (th - lh) * 0.5
-        text(tx + pad, ty, on and HUD.text or (hov and HUD.subtext or HUD.muted), label)
-        if badge then
-            text(tx + pad + text_w(label) + 8, ty, on and (t[4] or color) or HUD.faint, badge)
-        end
-        tx = tx + tw + 4
-    end
-    return clicked_key, tx - x - 4, th
+    local empy_min = empy.min_width()
+    return math.max(ui.header_need or 0, ki_need, empy_min, 64 * u)
 end
 
 local function render_header()
-    local dl = DL()
-    local wx, wy = imgui.GetWindowPos()
-    local ww, wh = imgui.GetWindowSize()
-    local x, y = imgui.GetCursorScreenPos()
-    local w = avail_w()
     local lh = line_h()
-
     local total = 0
     for _, area in ipairs(AREAS) do total = total + #area.kis end
     local have = has_required_page()
@@ -1137,70 +1198,41 @@ local function render_header()
         { 1, 'KEY ITEMS', have and ('%d/%d'):format(count_owned(), total) or nil },
         { 2, 'STAGGERS', state.vana_ok and blue_window():upper() or nil },
         { 3, 'ATMA', have and ('%d/%d'):format(count_atma()) or nil },
+        { 4, 'EMPYREAN', nil },
     }
+    band('aby_hdr', function(x, y, w)
+        local row_h = lh + 18
+        T.logo(x + 16, y + row_h * 0.5, 11)
+        local tx = x + 38
+        T.title_text(tx, y, row_h, 'ABYSSEA TOOLKIT', HUD.text)
+        tx = tx + T.title_w('ABYSSEA TOOLKIT') + 26
 
-    -- Measure the pieces so the header can collapse to one row.
-    local title_scale = 1.15
-    local title_w = text_w('ABYSSEA TOOLKIT') * title_scale
-    local tabs_w = 0
-    for _, t in ipairs(tabs) do tabs_w = tabs_w + text_w(t[2]) + (t[3] and (text_w(t[3]) + 8) or 0) + 22 + 4 end
-    local bs = lh + 4
-    local clock_w = 0
-    local day, clock, ec
-    if state.vana_ok then
-        day = current_day()
-        ec = ELEMENT_COLOR[DAY_ELEMENT[day] or ''] or HUD.text
-        clock = ('%02d:%02d'):format(state.vana_hour, state.vana_minute)
-        clock_w = 20 + text_w(clock) + 8 + text_w(day) + 10
-    end
-    ui.header_need = title_w + 16 + tabs_w + 12 + clock_w + 8 + bs
-    local one_row = ui.header_need <= w + 0.5
-    local row_h = lh + 8
-    local head_h = one_row and row_h or (row_h * 2 + 6)
+        -- right: Vana'diel clock pill (day colour) + close
+        local bs = lh + 8
+        local bx = x + w - bs
+        if T.close_button(bx, y + (row_h - bs) * 0.5, bs) then state.visible[1] = false end
+        local right = bx - 12
+        if state.vana_ok then
+            local day = current_day()
+            local dc = ELEMENT_COLOR[DAY_ELEMENT[day] or ''] or HUD.text
+            local clock = ('%02d:%02d'):format(state.vana_hour, state.vana_minute)
+            local cw = T.dot_pill_w(clock, day)
+            right = right - cw
+            T.dot_pill(nil, right, y + (row_h - (lh + 10)) * 0.5, clock, dc, day, dc, true)
+            right = right - 12
+        end
 
-    -- Band
-    local band_top, band_bot = y - 30, y + head_h + 5
-    dl:PushClipRect({ wx, wy }, { wx + ww, math.min(wy + wh, band_bot) }, true)
-    dl:AddRectFilled({ wx, band_top }, { wx + ww, band_bot + 12 }, col(HUD.header_bg), 10)
-    dl:AddRectFilledMultiColor({ wx, band_top + 12 }, { wx + ww * 0.7, band_bot },
-        col(HUD.accent, 0.10), col(HUD.accent, 0), col(HUD.accent, 0), col(HUD.accent, 0.04))
-    dl:PopClipRect()
-    dl:PushClipRect({ wx, wy }, { wx + ww, wy + wh }, true)
-    dl:AddRectFilledMultiColor({ wx, band_bot - 1 }, { wx + ww, band_bot },
-        col(HUD.accent, 0.8), col(HUD.accent, 0), col(HUD.accent, 0), col(HUD.accent, 0.8))
-    dl:PopClipRect()
-
-    -- Title
-    local ty = y + (row_h - lh * title_scale) * 0.5
-    text(x, ty, HUD.accent, 'ABYSSEA TOOLKIT', title_scale)
-
-    -- Close
-    local bx, by = x + w - bs, y + (row_h - bs) * 0.5
-    local clicked, hov = hit('##aby_close', bx, by, bs, bs)
-    if clicked then state.visible[1] = false end
-    if hov then dl:AddRectFilled({ bx, by }, { bx + bs, by + bs }, col(HUD.text, 0.10), 5) end
-    local m, c = bs * 0.32, hov and HUD.text or HUD.muted
-    dl:AddLine({ bx + m, by + m }, { bx + bs - m, by + bs - m }, col(c), 1.5)
-    dl:AddLine({ bx + bs - m, by + m }, { bx + m, by + bs - m }, col(c), 1.5)
-
-    -- Clock pill
-    if state.vana_ok then
-        local cx, cy = bx - 8 - clock_w, y + (row_h - lh) * 0.5
-        dl:AddRectFilled({ cx, cy - 2 }, { cx + clock_w, cy + lh + 2 }, col(ec, 0.10), (lh + 4) * 0.5)
-        dl:AddRect({ cx, cy - 2 }, { cx + clock_w, cy + lh + 2 }, col(ec, 0.40), (lh + 4) * 0.5, CORNERS_ALL, 1.0)
-        dot(cx + 10, cy + lh * 0.5, 3, ec, 0.5 + pulse(2) * 0.5)
-        text(cx + 20, cy, HUD.text, clock)
-        text(cx + 20 + text_w(clock) + 8, cy, ec, day)
-    end
-
-    -- Tabs
-    local tab_x = one_row and (x + title_w + 16) or x
-    local tab_y = one_row and (y + (row_h - (lh + 8)) * 0.5) or (y + row_h + 6)
-    local picked = seg_tabs('aby_tab', tabs, state.tab, tab_x, tab_y, HUD.accent, false)
-    if picked then state.tab = picked end
-
-    advance(w, head_h)
-    imgui.Dummy({ 0, 4 })
+        -- tabs between title and clock (second row if they don't fit)
+        local tabs_w = seg_width(tabs, false)
+        local one_row = tx + tabs_w <= right
+        local tab_x = one_row and tx or x
+        local tab_y = one_row and (y + (row_h - (lh + 12)) * 0.5) or (y + row_h + 6)
+        local picked = seg_tabs('aby_tab', tabs, state.tab, tab_x, tab_y, HUD.gold, false)
+        if picked and picked ~= state.tab then state.tab = picked; save_settings() end
+        ui.header_need = 38 + T.title_w('ABYSSEA TOOLKIT') + 26 + tabs_w + 12
+            + (state.vana_ok and (T.dot_pill_w('00:00', 'Lightningday') + 12) or 0) + bs + 16
+        return one_row and row_h or (row_h + 6 + lh + 12)
+    end)
 end
 
 --------------------------------------------------------------------------------
@@ -1422,44 +1454,17 @@ local function render_status_tiles()
     advance(w, th)
 end
 
-local function toggle_chip(id, label, on, x, y, c)
-    local dl = DL()
-    local lh = line_h()
-    local w, h = text_w(label) + 34, lh + 10
-    local clicked, hov = hit(id, x, y, w, h)
-    dl:AddRectFilled({ x, y }, { x + w, y + h }, col(on and c or HUD.text, on and 0.16 or (hov and 0.07 or 0.04)), h * 0.5)
-    dl:AddRect({ x, y }, { x + w, y + h }, col(on and c or HUD.faint, on and 0.6 or 0.5), h * 0.5, CORNERS_ALL, 1.0)
-    -- switch knob
-    local kx, ky = x + 13, y + h * 0.5
-    dl:AddCircle({ kx, ky }, 5, col(on and c or HUD.muted), 16, 1.2)
-    if on then dl:AddCircleFilled({ kx, ky }, 3, col(c), 12) end
-    text(x + 24, y + 5, on and HUD.text or (hov and HUD.subtext or HUD.muted), label)
-    return clicked, w
-end
-
 local function render_controls()
-    local x, y = imgui.GetCursorScreenPos()
-    local w = avail_w()
-    local c1, w1 = toggle_chip('##aby_all', 'Show all', state.show_all[1], x, y, HUD.accent)
-    if c1 then state.show_all[1] = not state.show_all[1] end
-    local c2, w2 = toggle_chip('##aby_compact', 'Compact', state.compact[1], x + w1 + 8, y, HUD.accent)
-    if c2 then state.compact[1] = not state.compact[1] end
-    local label3 = state.alert_mode == 'any' and 'Stagger popups (any mob)' or 'Stagger popups'
-    local c3 = toggle_chip('##aby_alerts', label3, state.alert_mode ~= 'off', x + w1 + w2 + 16, y, HUD.gold)
-    if c3 then state.alert_mode = (state.alert_mode == 'off') and 'target' or 'off' end
-    advance(w, line_h() + 10)
-end
-
--- Panel wrapper: background sized from last frame's measurement.
-local function panel(id, accent, draw_fn)
-    local x, y = imgui.GetCursorScreenPos()
-    local w = avail_w()
-    local h = ui.h[id] or 120
-    card_bg(x, y, w, h, accent, 0.9)
-    local content_h = draw_fn(x + 12, y + 9, w - 24)
-    ui.h[id] = content_h + 18
-    advance(w, h)
-    imgui.Dummy({ 0, 2 })
+    band('aby_ctl', function(x, y, w)
+        local c1, w1 = toggle_chip('##aby_all', 'Show all', state.show_all[1], x, y, HUD.accent)
+        if c1 then state.show_all[1] = not state.show_all[1] end
+        local c2, w2 = toggle_chip('##aby_compact', 'Compact', state.compact[1], x + w1 + 8, y, HUD.accent)
+        if c2 then state.compact[1] = not state.compact[1] end
+        local label3 = state.alert_mode == 'any' and 'Stagger popups (any mob)' or 'Stagger popups'
+        local c3 = toggle_chip('##aby_alerts', label3, state.alert_mode ~= 'off', x + w1 + w2 + 16, y, HUD.gold)
+        if c3 then state.alert_mode = (state.alert_mode == 'off') and 'target' or 'off' end
+        return line_h() + 10
+    end)
 end
 
 local function render_red()
@@ -1585,7 +1590,7 @@ local function render_yellow()
                         dl:AddRect({ cx, cy - 1.5 }, { cx + sw, cy + lh + 1.5 }, col(ec, 0.45), (lh + 3) * 0.5, CORNERS_ALL, 1.0)
                     end
                 end
-                text(cx + 7, cy, dim and HUD.faint or (today and HUD.text or HUD.subtext), spell)
+                text(cx + 7, cy, rgba(ec, dim and 0.45 or (today and 1.0 or 0.80)), spell)
                 cx = cx + sw + 6
             end
             py = cy + lh + (state.compact[1] and 6 or 9)
@@ -1656,7 +1661,8 @@ local function render_lights_bar()
     end
 
     local label_w = text_w('LIGHTS') + 22
-    local avail = w - 20 - label_w
+    local time_w = here and (text_w('TIME') + text_w('~0:00:00') + 16) or 0
+    local avail = w - 20 - label_w - (here and (time_w + 12) or 0)
     local per_row = (avail / 7 >= text_w('SILVERY') + text_w('~255') + 6) and 7 or 4
     local rows = math.ceil(7 / per_row)
     local cell_h = lh + 9
@@ -1692,12 +1698,51 @@ local function render_lights_bar()
         end
     end
 
+    -- Visitant time, at the end of the bar
+    if here then
+        local tx = x + w - 10 - time_w
+        dl:AddRectFilled({ tx - 7, y + 6 }, { tx - 6, y + h - 6 }, col(HUD.text, 0.10))
+        local left = state.visitant_end and (state.visitant_end - os.time()) or nil
+        local val, vcol
+        if left == nil then
+            val, vcol = '--:--', HUD.faint
+        else
+            left = math.max(0, left)
+            local hh, mm, ss = math.floor(left / 3600), math.floor(left % 3600 / 60), left % 60
+            val = hh > 0 and ('%d:%02d:%02d'):format(hh, mm, ss) or ('%d:%02d'):format(mm, ss)
+            if not state.visitant_exact and left > 0 then val = '~' .. val end
+            if left <= 120 then vcol = HUD.bad
+            elseif left <= 600 then vcol = HUD.warn
+            else vcol = HUD.text end
+        end
+        local ty = y + 8
+        text(tx, ty, HUD.accent2, 'TIME')
+        local vx = tx + time_w - text_w(val)
+        if left ~= nil and left <= 120 and left > 0 then
+            dl:AddRectFilled({ vx - 4, ty - 1 }, { vx + text_w(val) + 4, ty + lh + 1 }, col(HUD.bad, 0.10 + pulse(4) * 0.15), 4)
+        end
+        text(vx, ty, vcol, val)
+        if rows > 1 then
+            text(tx, ty + cell_h, HUD.faint, 'visitant')
+        end
+        if mouse_over(tx - 6, y, time_w + 10, h) then
+            if left == nil then
+                imgui.SetTooltip('Visitant time remaining\n/heal in Abyssea to read it')
+            else
+                imgui.SetTooltip(('Visitant time remaining%s\n/heal to resync'):format(
+                    state.visitant_exact and '' or '\n~ = read in whole minutes, may be up to 30s off'))
+            end
+        end
+    end
+
     advance(w, h)
 end
 
 --------------------------------------------------------------------------------
 -- Atma & abyssites tab: expansion -> zone sub-tabs
 --------------------------------------------------------------------------------
+
+local abyssite_tooltip, atma_tooltip
 
 local GEM_COLOR = {
     ivory = { 0.95, 0.92, 0.82, 1 }, scarlet = { 1.00, 0.36, 0.30, 1 }, jade = { 0.56, 0.86, 0.62, 1 },
@@ -1713,6 +1758,48 @@ local function gem_name(gem, group)
     return ('%s%s Abyssite of %s'):format(gem:sub(1, 1):upper(), gem:sub(2), suffix)
 end
 
+-- What each abyssite does (retail descriptions, FFXIclopedia). Notes mark where
+-- the LSB server's code differs or doesn't implement it.
+local ABYSSITE_FX = {
+    Sojourn      = { 'Visitant time from each traverser stone +3 minutes (+10%).' },
+    Celerity     = { 'Traverser stones replenish 4 hours sooner.', 'LSB: 1 hour sooner for each Celerity abyssite.' },
+    Avarice      = { 'Hold one more traverser stone.' },
+    Confluence   = { 'Veridical Conflux cruor cost -20%.' },
+    Expertise    = { 'Martello recast 5 minutes shorter.' },
+    Fortune      = { 'Treasure caskets appear more often in Abyssea.' },
+    Kismet       = { 'Better luck with blue treasure caskets (EXP).' },
+    Prosperity   = { 'Better luck with red treasure caskets.' },
+    Destiny      = { 'Better luck with golden treasure caskets.' },
+    Acumen       = { 'One fewer correct guess needed to open a casket.' },
+    Lenity       = { 'EXP lost when knocked out in Abyssea -10%.' },
+    Perspicacity = { 'Gain experience more readily in Abyssea.' },
+    Reaper       = { 'Enemies yield 10% more cruor.' },
+    Guerdon      = { 'Temporary items when you gain visitant status:' },
+    Furtherance  = { 'Cruor Prospector attribute bonuses +10, other enhancements stronger.', 'LSB: +10 to each attribute boost per abyssite.' },
+    Merit        = { 'Cruor Prospector HP bonus +10% and MP bonus +5%.', 'LSB: HP +10 / MP +5 per abyssite on those boosts.' },
+    Lunar        = { 'One Atma infusion at an Atma Infusionist (two for two, three for three).' },
+    Discernment  = { 'Sometimes shows a weakness hint when you weapon skill or cast on an Abyssea NM.' },
+    Cosmos       = { 'Primeval Brew costs 200,000 cruor.' },
+}
+local GUERDON_ITEMS = {
+    viridian = 'Lucid Potion I + Lucid Ether I', ivory = 'Catholicon + Dusty Elixir',
+    vermillion = "Stalwart's Tonic + Ascetic's Tonic",
+}
+
+abyssite_tooltip = function(gem, group, has)
+    local lines = { gem_name(gem, group) .. (has and '   [owned]' or '   [missing]'), '' }
+    local fx = ABYSSITE_FX[group]
+    if fx then
+        lines[#lines + 1] = fx[1]
+        if group == 'Guerdon' and GUERDON_ITEMS[gem] then lines[#lines + 1] = '  ' .. GUERDON_ITEMS[gem] end
+        if fx[2] then lines[#lines + 1] = fx[2] end
+    end
+    if group ~= 'Lunar' and group ~= 'Discernment' and group ~= 'Cosmos' and group ~= 'Guerdon' then
+        lines[#lines + 1] = 'Each colour is a separate abyssite; the effects stack.'
+    end
+    return table.concat(lines, '\n')
+end
+
 local EXPANSIONS = {
     { key = 'vision', label = 'VISION', color = { 0.48, 0.86, 1.00, 1 },
       zones = { { 15, 'Konschtat' }, { 45, 'Tahrongi' }, { 132, 'La Theine' } } },
@@ -1721,6 +1808,29 @@ local EXPANSIONS = {
     { key = 'heroes', label = 'HEROES', color = { 1.00, 0.80, 0.36, 1 },
       zones = { { 218, 'Altepa' }, { 253, 'Uleguerand' }, { 254, 'Grauberg' } } },
 }
+local ZONE_NAME = {}
+for _, e in ipairs(EXPANSIONS) do for _, z in ipairs(e.zones) do ZONE_NAME[z[1]] = z[2] end end
+
+-- Atma names, sources and effects (abyatma.lua: retail values from bg-wiki).
+local ATMA_FX = require('abyatma')
+
+atma_tooltip = function(a, has)
+    local fx = ATMA_FX[a[1]] or {}
+    local lines = { (fx.name or ('Atma: ' .. a[2])) .. (has and '   [owned]' or '   [missing]') }
+    if a[3] then
+        lines[#lines + 1] = ('From %s  -  Abyssea - %s'):format(a[3], ZONE_NAME[a[4]] or '?')
+    elseif fx.src and fx.src ~= '' then
+        lines[#lines + 1] = 'From ' .. fx.src
+    end
+    lines[#lines + 1] = ''
+    if #fx > 0 then
+        for _, l in ipairs(fx) do lines[#lines + 1] = '  ' .. l end
+    else
+        lines[#lines + 1] = 'No effect listed.'
+    end
+    return table.concat(lines, '\n')
+end
+
 local ZONE_EXPANSION = {}
 for _, e in ipairs(EXPANSIONS) do for _, z in ipairs(e.zones) do ZONE_EXPANSION[z[1]] = e.key end end
 
@@ -1789,6 +1899,11 @@ local function render_atma_list(pred, accent)
             local r = (i - 1) % rows
             local cx, cy = x + c * (cw + gap), y + r * rh
             if r % 2 == 0 then dl:AddRectFilled({ cx - 4, cy - 2 }, { cx + cw + 4, cy + lh + 2 }, col(HUD.text, 0.025), 4) end
+            local _, hov = hit(('##atma%d'):format(a[1]), cx - 4, cy - 2, cw + 8, lh + 4)
+            if hov then
+                dl:AddRectFilled({ cx - 4, cy - 2 }, { cx + cw + 4, cy + lh + 2 }, col(HUD.sel_fill, 0.55), 4)
+                imgui.SetTooltip(atma_tooltip(a, has))
+            end
             draw_check(cx + 5, cy + lh * 0.5, 5, has)
             text(cx + 16, cy, has and HUD.text or HUD.muted, a[2])
             if a[3] then
@@ -1840,7 +1955,7 @@ local function render_abyssite_grid()
                 end
                 if hov then
                     dl:AddCircle({ dx, dy }, 7.5, col(HUD.text, 0.8), 16, 1.1)
-                    imgui.SetTooltip(gem_name(gem[2], g[1]) .. (has and '  (owned)' or '  (missing)'))
+                    imgui.SetTooltip(abyssite_tooltip(gem[2], g[1], has))
                 end
             end
             local cnt = ('%d/%d'):format(owned, #g[2])
@@ -1865,58 +1980,57 @@ local function render_atma_tab()
     end
 
     follow_zone()
-    local lh = line_h()
-    local x, y = imgui.GetCursorScreenPos()
-    local w = avail_w()
-
-    -- Level 1: expansions + other + abyssites
-    local items = {}
-    for _, e in ipairs(EXPANSIONS) do
-        local zs = {}
-        for _, z in ipairs(e.zones) do zs[z[1]] = true end
-        local o, t = atma_count_where(function(a) return zs[a[4]] end)
-        items[#items + 1] = { e.key, e.label, count_badge(o, t), badge_col(o, t) }
-    end
-    local oo, ot = atma_count_where(function(a) return a[4] == 0 end)
-    items[#items + 1] = { 'other', 'OTHER', count_badge(oo, ot), badge_col(oo, ot) }
-    local ao, at = count_abyssites()
-    items[#items + 1] = { 'sites', 'ABYSSITES', count_badge(ao, at), badge_col(ao, at) }
-
-    local picked, _, th = seg_tabs('atma_grp', items, ui.atma_group, x, y, HUD.gold, true)
-    if picked then ui.atma_group = picked end
-    local row_y = y + th + 6
-
-    -- Level 2: zones (for expansions) + filter, on one row
     local exp = nil
     for _, e in ipairs(EXPANSIONS) do if e.key == ui.atma_group then exp = e end end
-    local zh = th
-    if exp then
-        local zitems = {}
-        for _, z in ipairs(exp.zones) do
-            local o, t = atma_count_where(function(a) return a[4] == z[1] end)
-            local here = player_zone() == z[1]
-            zitems[#zitems + 1] = { z[1], (here and '> ' or '') .. z[2], count_badge(o, t), badge_col(o, t) }
+
+    band('atma_nav', function(x, y, w)
+        -- Level 1: expansions + other + abyssites
+        local items = {}
+        for _, e in ipairs(EXPANSIONS) do
+            local zs = {}
+            for _, z in ipairs(e.zones) do zs[z[1]] = true end
+            local o, t = atma_count_where(function(a) return zs[a[4]] end)
+            items[#items + 1] = { e.key, e.label, count_badge(o, t), badge_col(o, t) }
         end
-        local zp
-        zp, _, zh = seg_tabs('atma_zone', zitems, ui.atma_zone[exp.key], x, row_y, exp.color, true)
-        if zp then ui.atma_zone[exp.key] = zp end
-    end
+        local oo, ot = atma_count_where(function(a) return a[4] == 0 end)
+        items[#items + 1] = { 'other', 'OTHER', count_badge(oo, ot), badge_col(oo, ot) }
+        local ao, at = count_abyssites()
+        items[#items + 1] = { 'sites', 'ABYSSITES', count_badge(ao, at), badge_col(ao, at) }
 
-    if ui.atma_group ~= 'sites' then
-        local fitems = { { 'all', 'All' }, { 'owned', 'Owned' }, { 'missing', 'Missing' } }
-        local fw = 0
-        for _, f in ipairs(fitems) do fw = fw + text_w(f[2]) + 18 + 4 end
-        local fy = exp and row_y or row_y
-        local fp = seg_tabs('atma_filter', fitems, ui.atma_filter, x + w - fw + 4, fy, HUD.accent, true)
-        if fp then ui.atma_filter = fp end
-    end
+        local picked, _, th = seg_tabs('atma_grp', items, ui.atma_group, x, y, HUD.gold, true)
+        if picked then ui.atma_group = picked end
+        local row_y = y + th + 6
 
-    local used = (exp or ui.atma_group ~= 'sites') and (th + 6 + zh + 6) or (th + 6)
-    advance(w, used - 6)
+        -- Level 2: zones (for expansions) + filter, on one row
+        local zh = th
+        if exp then
+            local zitems = {}
+            for _, z in ipairs(exp.zones) do
+                local o, t = atma_count_where(function(a) return a[4] == z[1] end)
+                local here = player_zone() == z[1]
+                zitems[#zitems + 1] = { z[1], (here and '> ' or '') .. z[2], count_badge(o, t), badge_col(o, t) }
+            end
+            local zp
+            zp, _, zh = seg_tabs('atma_zone', zitems, ui.atma_zone[exp.key], x, row_y, exp.color, true)
+            if zp then ui.atma_zone[exp.key] = zp end
+        end
+        if ui.atma_group ~= 'sites' then
+            local fitems = { { 'all', 'All' }, { 'owned', 'Owned' }, { 'missing', 'Missing' } }
+            local fp = seg_tabs('atma_filter', fitems, ui.atma_filter, x + w - seg_width(fitems, true), row_y, HUD.accent, true)
+            if fp then ui.atma_filter = fp end
+        end
+        if exp or ui.atma_group ~= 'sites' then return th + 6 + zh end
+        return th
+    end)
+
+    -- The group may have just been changed by a click in the strip above, so
+    -- look the expansion up again rather than reusing the one from before it.
+    exp = nil
+    for _, e in ipairs(EXPANSIONS) do if e.key == ui.atma_group then exp = e end end
 
     if ui.atma_group == 'sites' then
         render_abyssite_grid()
-    elseif ui.atma_group == 'other' then
+    elseif ui.atma_group == 'other' or exp == nil then
         render_atma_list(function(a) return a[4] == 0 end, HUD.muted)
     else
         local zid = ui.atma_zone[exp.key]
@@ -1950,7 +2064,8 @@ local function render_alerts()
     local sh = (io_ok and io and io.DisplaySize and io.DisplaySize.y) or 1080
 
     local ww, wh = 900, 360
-    imgui.SetNextWindowPos({ (sw - ww) * 0.5, sh * 0.20 }, ImGuiCond_Always)
+    local vp = main_viewport()
+    imgui.SetNextWindowPos({ vp[1] + (vp[3] - ww) * 0.5, vp[2] + vp[4] * 0.20 }, ImGuiCond_Always)
     imgui.SetNextWindowSize({ ww, wh }, ImGuiCond_Always)
     imgui.PushStyleVar(ImGuiStyleVar_WindowPadding, { 0, 0 })
     imgui.PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0)
@@ -1958,8 +2073,9 @@ local function render_alerts()
 
     local flags = bit.bor(ImGuiWindowFlags_NoTitleBar, ImGuiWindowFlags_NoResize, ImGuiWindowFlags_NoMove,
         ImGuiWindowFlags_NoInputs, ImGuiWindowFlags_NoScrollbar, ImGuiWindowFlags_NoSavedSettings,
-        ImGuiWindowFlags_NoFocusOnAppearing, ImGuiWindowFlags_NoNav, ImGuiWindowFlags_NoBackground or 0)
+        ImGuiWindowFlags_NoFocusOnAppearing, ImGuiWindowFlags_NoNav, ImGuiWindowFlags_NoBackground or 0, NO_DOCK)
 
+    place_window({}, ww, wh)
     if imgui.Begin('##abyhub_stagger_alerts', true, flags) then
         local wx, wy = imgui.GetWindowPos()
         local lh = line_h()
@@ -1999,35 +2115,16 @@ end
 -- Standalone floating lights window (toggle with /abylights).
 local function lights_width()
     local cell = text_w('SILVERY') + text_w('~255') + 14
-    return text_w('LIGHTS') + 22 + 20 + 7 * cell + 6 * 10
+    local time_w = in_abyssea() and (text_w('TIME') + text_w('~0:00:00') + 16 + 12) or 0
+    return text_w('LIGHTS') + 22 + 20 + 7 * cell + 6 * 10 + time_w
 end
 
 local render_lights_window -- defined after push_style/pop_style
 
-local function push_style()
-    imgui.PushStyleColor(ImGuiCol_WindowBg, HUD.window_bg)
-    imgui.PushStyleColor(ImGuiCol_Border, { 0.30, 0.76, 1.00, 0.22 })
-    imgui.PushStyleColor(ImGuiCol_Text, HUD.text)
-    imgui.PushStyleColor(ImGuiCol_ScrollbarBg, { 0, 0, 0, 0 })
-    imgui.PushStyleColor(ImGuiCol_ScrollbarGrab, { 0.30, 0.76, 1.00, 0.25 })
-    imgui.PushStyleColor(ImGuiCol_ScrollbarGrabHovered, { 0.30, 0.76, 1.00, 0.45 })
-    imgui.PushStyleColor(ImGuiCol_ScrollbarGrabActive, { 0.30, 0.76, 1.00, 0.65 })
-    imgui.PushStyleColor(ImGuiCol_ResizeGrip, { 0.30, 0.76, 1.00, 0.10 })
-    imgui.PushStyleColor(ImGuiCol_ResizeGripHovered, { 0.30, 0.76, 1.00, 0.35 })
-    imgui.PushStyleColor(ImGuiCol_ResizeGripActive, { 0.30, 0.76, 1.00, 0.60 })
+local push_style, pop_style = T.push_style, T.pop_style
 
-    imgui.PushStyleVar(ImGuiStyleVar_WindowRounding, 10.0)
-    imgui.PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0)
-    imgui.PushStyleVar(ImGuiStyleVar_WindowPadding, { 10, 8 })
-    imgui.PushStyleVar(ImGuiStyleVar_ItemSpacing, { 6, 5 })
-    imgui.PushStyleVar(ImGuiStyleVar_ScrollbarSize, 8.0)
-    imgui.PushStyleVar(ImGuiStyleVar_ScrollbarRounding, 6.0)
-end
-
-local function pop_style()
-    imgui.PopStyleVar(6)
-    imgui.PopStyleColor(10)
-end
+local lights_h = nil   -- lights window content height, measured each frame
+local lights_win = {}  -- lights window position (kept on screen)
 
 render_lights_window = function()
     if not state.lights_bar[1] then return end
@@ -2037,13 +2134,26 @@ render_lights_window = function()
     imgui.PushStyleVar(ImGuiStyleVar_WindowPadding, { 0, 0 })
     imgui.PushStyleColor(ImGuiCol_WindowBg, { 0, 0, 0, 0 })
     imgui.PushStyleColor(ImGuiCol_Border, { 0, 0, 0, 0 })
-    local flags = bit.bor(ImGuiWindowFlags_NoTitleBar, ImGuiWindowFlags_NoCollapse, ImGuiWindowFlags_AlwaysAutoResize,
-        ImGuiWindowFlags_NoScrollbar, ImGuiWindowFlags_NoFocusOnAppearing)
+    -- Fixed size from the content (no auto-resize; see the main window).
+    local lw = lights_width() + ui.inset * 2
+    local lhh = lights_h or (line_h() * 2 + 30)
+    imgui.SetNextWindowSize({ lw, lhh }, ImGuiCond_Always)
+    place_window(lights_win, lw, lhh)
+    local flags = bit.bor(ImGuiWindowFlags_NoTitleBar, ImGuiWindowFlags_NoCollapse, ImGuiWindowFlags_NoResize,
+        ImGuiWindowFlags_NoScrollbar, ImGuiWindowFlags_NoScrollWithMouse, ImGuiWindowFlags_NoFocusOnAppearing,
+        ImGuiWindowFlags_NoMove, NO_DOCK)
+    undock_next()
     if imgui.Begin('Abyssea Lights##abyhub_lights', state.lights_bar, flags) then
+        pcall(imgui.SetScrollX, 0)
+        pcall(imgui.SetScrollY, 0)
         local saved_cw, saved_left = ui.cw, ui.left_x
-        ui.left_x = imgui.GetCursorScreenPos()
-        ui.cw = lights_width()
+        local _, top = imgui.GetCursorScreenPos()
+        T.begin_content(lw)
         render_lights_bar()
+        T.end_content()
+        local _, bottom = imgui.GetCursorScreenPos()
+        lights_h = math.max(20, bottom - top)
+        drag_window(lights_win)
         ui.cw, ui.left_x = saved_cw, saved_left
     end
     imgui.End()
@@ -2052,7 +2162,25 @@ render_lights_window = function()
     pop_style()
 end
 
+-- Visitant status doesn't survive leaving Abyssea, so forget the old timer when
+-- you come back in from outside.
+local visitant_last_zone = nil
+local function track_visitant_zone()
+    local z = player_zone()
+    if z == 0 then return end
+    if visitant_last_zone ~= nil and z ~= visitant_last_zone
+        and ABYSSEA_ZONES[z] ~= nil and ABYSSEA_ZONES[visitant_last_zone] == nil then
+        state.visitant_end = nil
+        state.visitant_exact = false
+    end
+    visitant_last_zone = z
+end
+
+-- Main window size bookkeeping (see the present callback).
+local win = { content_h = nil, reset = false }
+
 ashita.events.register('d3d_present', 'abyhub_present_cb', function()
+    track_visitant_zone()
     update_vana_time()
     update_target()
     update_target_id()
@@ -2064,25 +2192,51 @@ ashita.events.register('d3d_present', 'abyhub_present_cb', function()
 
     push_style()
 
-    -- The window fits its content; only height is capped (then it scrolls).
+    -- The window size is set here every frame instead of using ImGui's auto-resize:
+    -- width from the layout, height from last frame's content (capped at 85% of the
+    -- screen, then it scrolls). Auto-resize could blow the window up while dragging.
     local io_ok, io = pcall(imgui.GetIO)
+    local sw = (io_ok and io and io.DisplaySize and io.DisplaySize.x) or 1920
     local sh = (io_ok and io and io.DisplaySize and io.DisplaySize.y) or 1080
-    if type(imgui.SetNextWindowSizeConstraints) == 'function' then
-        imgui.SetNextWindowSizeConstraints({ 0, 0 }, { 4096, sh * 0.85 })
+    local PAD_X, PAD_Y, SCROLL_W = 14, 12, 12
+    local cw = content_width() + ui.inset * 2
+    local max_h = math.floor(sh * 0.85)
+    local need_h = (win.content_h or 300) + PAD_Y * 2
+    local scrolls = need_h > max_h
+    local ww = math.min(cw + PAD_X * 2 + (scrolls and SCROLL_W or 0), sw - 20)
+    local wh = math.min(need_h, max_h)
+    imgui.SetNextWindowSize({ ww, wh }, ImGuiCond_Always)
+    if win_reset_request then win.reset, win_reset_request = true, false end
+    if win.reset then
+        local vp = main_viewport()
+        win.pos = { vp[1] + (vp[3] - ww) * 0.5, vp[2] + (vp[4] - wh) * 0.5 }
+        win.reset, win.drag = false, nil
     end
+    place_window(win, ww, wh)
 
-    local flags = bit.bor(ImGuiWindowFlags_NoTitleBar, ImGuiWindowFlags_NoCollapse, ImGuiWindowFlags_AlwaysAutoResize)
+    local flags = bit.bor(ImGuiWindowFlags_NoTitleBar, ImGuiWindowFlags_NoCollapse, ImGuiWindowFlags_NoResize,
+        ImGuiWindowFlags_NoMove, NO_DOCK)
+    undock_next()
     if imgui.Begin('Abyssea Toolkit##abyhub_combined', state.visible, flags) then
-        ui.left_x = imgui.GetCursorScreenPos()
-        ui.cw = content_width()
+        pcall(imgui.SetScrollX, 0)      -- never scroll sideways
+        local _, top = imgui.GetCursorScreenPos()
+        T.draw_window_frame()
+        T.begin_content(cw)
         render_header()
         if state.tab == 1 then
             render_key_items()
         elseif state.tab == 3 then
             render_atma_tab()
+        elseif state.tab == 4 then
+            empy.tick()
+            empy.render()
         else
             render_staggers()
         end
+        T.end_content()
+        local _, bottom = imgui.GetCursorScreenPos()
+        win.content_h = math.max(60, bottom - top)
+        drag_window(win)
     end
 
     imgui.End()
@@ -2092,7 +2246,8 @@ end)
 ashita.events.register('load', 'abyhub_load_cb', function()
     init_vana_time()
     load_settings()
+    empy.load()
     print(chat.header(addon.name):append(chat.success(
-        ('v%s loaded - combined Key Items + Staggers. Use /aby.'):format(addon.version)
+        ('v%s loaded - Abyssea + Empyrean toolkit. /aby to open, /aby help for commands.'):format(addon.version)
     )))
 end)
