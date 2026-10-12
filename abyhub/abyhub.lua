@@ -1,6 +1,6 @@
 addon.name = 'abyhub'
 addon.author = 'Laudout'
-addon.version = '2.8.2'
+addon.version = '2.8.3'
 addon.desc = 'Abyssea + Empyrean toolkit: key items, staggers, atma, lights, Empyrean armour, NMs and weapons.'
 
 require('common')
@@ -1522,7 +1522,7 @@ local function draw_zone_card(area, x, y, w, h)
     local owned = count_area_owned(area)
     local done = owned == #area.kis
     card_bg(x, y, w, h, done and HUD.owned or nil)
-    dl:PushClipRect({ x, y }, { x + w, y + h }, true)
+    local clipped = T.push_clip(x, y, x + w, y + h)
 
     local px, py, pw = x + 10, y + 9, w - 20
     local count = ('%d/%d'):format(owned, #area.kis)
@@ -1566,7 +1566,7 @@ local function draw_zone_card(area, x, y, w, h)
         end
     end
 
-    dl:PopClipRect()
+    T.pop_clip(clipped)
     return (py - y) + 2
 end
 
@@ -1698,9 +1698,9 @@ local function render_status_tiles()
     local has_target = state.target ~= 'No target'
     card_bg(x, y, tw, th, has_target and HUD.owned or nil, 0.8)
     text(x + 12, y + 8, HUD.muted, 'TARGET')
-    dl:PushClipRect({ x, y }, { x + tw - 8, y + th }, true)
+    local clipped2 = T.push_clip(x, y, x + tw - 8, y + th)
     text(x + 12, y + 10 + lh, has_target and HUD.text or HUD.faint, state.target, 1.25)
-    dl:PopClipRect()
+    T.pop_clip(clipped2)
     if has_target then dot(x + tw - 14, y + 8 + lh * 0.5, 3.5, HUD.owned, 0.5 + pulse(3) * 0.5) end
 
     -- Vana'diel time + day
