@@ -1,6 +1,6 @@
 addon.name = 'abyhub'
 addon.author = 'Laudout'
-addon.version = '2.5.0'
+addon.version = '2.6.0'
 addon.desc = 'Abyssea + Empyrean toolkit: key items, staggers, atma, lights, Empyrean armour, NMs and weapons.'
 
 require('common')
@@ -109,7 +109,7 @@ local state = {
 
 local AREAS = {
     {
-        name = 'Abyssea-Konschtat',
+        name = 'Abyssea-Konschtat', zone = 15, exp = 'vision',
         kis = {
             {1459, 'Fragrant Treant Petal'},
             {1460, 'Fetid Rafflesia Stalk'},
@@ -123,7 +123,7 @@ local AREAS = {
         },
     },
     {
-        name = 'Abyssea-Tahrongi',
+        name = 'Abyssea-Tahrongi', zone = 45, exp = 'vision',
         kis = {
             {1468, 'Veinous Hecteyes Eyelid'},
             {1469, 'Torn Bat Wing'},
@@ -138,7 +138,7 @@ local AREAS = {
         },
     },
     {
-        name = 'Abyssea-La Theine',
+        name = 'Abyssea-La Theine', zone = 132, exp = 'vision',
         kis = {
             {1478, 'Marbled Mutton Chop'},
             {1479, 'Bloodied Saber Tooth'},
@@ -149,6 +149,83 @@ local AREAS = {
             {1484, 'Severed Gigas Collar'},
             {1485, 'Pellucid Fly Eye'},
             {1486, 'Shimmering Pixie Pinion'},
+        },
+    },
+    -- Scars of Abyssea / Heroes of Abyssea (LSB data; Misareaux, Vunkerl and
+    -- Uleguerand from bg-wiki / FFXIclopedia, as LSB hasn't implemented them yet)
+    {
+        name = 'Abyssea-Attohwa', zone = 215, exp = 'scars',
+        kis = {
+            {1488, 'Venomous Wamoura Feeler'},
+            {1489, 'Bulbous Crawler Cocoon'},
+            {1490, 'Distended Chigoe Abdomen'},
+            {1491, 'Mucid Worm Segment'},
+            {1492, 'Shriveled Hecteyes Stalk'},
+            {1493, 'Blotched Doomed Tongue'},
+            {1494, 'Cracked Skeleton Clavicle'},
+            {1495, 'Writhing Ghost Finger'},
+            {1496, 'Rusted Hound Collar'},
+            {1497, 'Hollow Dragon Eye'},
+        },
+    },
+    {
+        name = 'Abyssea-Misareaux', zone = 216, exp = 'scars',
+        kis = {
+            {1498, 'Bloodstained Bugard Fang'},
+            {1499, 'Gnarled Lizard Nail'},
+            {1500, 'Molted Peiste Skin'},
+            {1501, 'Jagged Apkallu Beak'},
+            {1502, 'Clipped Bird Wing'},
+            {1503, 'Bloodied Bat Fur'},
+            {1504, 'Glistening Orobon Liver'},
+            {1505, 'Doffed Poroggo Hat'},
+            {1506, 'Scalding Ironclad Spike'},
+            {1507, 'Blazing Cluster Soul'},
+        },
+    },
+    {
+        name = 'Abyssea-Vunkerl', zone = 217, exp = 'scars',
+        kis = {
+            {1508, 'Ingrown Taurus Nail'},
+            {1509, 'Ossified Gargouille Hand'},
+            {1510, 'Imbrued Vampyr Fang'},
+            {1511, 'Glossy Sea Monk Sucker'},
+            {1512, 'Shimmering Pugil Scale'},
+            {1513, 'Decayed Dvergr Tooth'},
+            {1514, 'Pulsating Soulflayer Beard'},
+            {1515, 'Chipped Imp\'s Olifant'},
+            {1516, 'Warped Smilodon Choker'},
+            {1517, 'Malodorous Marid Fur'},
+        },
+    },
+    {
+        name = 'Abyssea-Altepa', zone = 218, exp = 'heroes',
+        kis = {
+            {1518, 'Broken Iron Giant Spike'},
+            {1519, 'Rusted Chariot Gear'},
+            {1520, 'Steaming Cerberus Tongue'},
+            {1521, 'Bloodied Dragon Ear'},
+            {1522, 'Resplendent Roc Quill'},
+        },
+    },
+    {
+        name = 'Abyssea-Uleguerand', zone = 253, exp = 'heroes',
+        kis = {
+            {1523, 'Warped Iron Giant Nail'},
+            {1524, 'Dented Chariot Shield'},
+            {1525, 'Torn Khimaira Wing'},
+            {1526, 'Begrimed Dragon Hide'},
+            {1527, 'Decaying Diremite Fang'},
+        },
+    },
+    {
+        name = 'Abyssea-Grauberg', zone = 254, exp = 'heroes',
+        kis = {
+            {1528, 'Shattered Iron Giant Chain'},
+            {1529, 'Warped Chariot Plate'},
+            {1530, 'Venomous Hydra Fang'},
+            {1531, 'Vacant Bugard Eye'},
+            {1532, 'Variegated Uragnite Shell'},
         },
     },
 }
@@ -199,6 +276,115 @@ local BOSSES = {
         name = 'Hadhayosh',
         kis = {1478, 1479, 1481, 1480},
     },
+    -- Scars / Heroes
+    { area = 'Abyssea-Attohwa', name = 'Itzpapalotl', kis = {1488, 1489, 1490} },
+    { area = 'Abyssea-Attohwa', name = 'Smok', kis = {1497} },
+    { area = 'Abyssea-Attohwa', name = 'Titlacauan', kis = {1493, 1494, 1495, 1496} },
+    { area = 'Abyssea-Attohwa', name = 'Ulhuadshi', kis = {1491, 1492} },
+    { area = 'Abyssea-Misareaux', name = 'Amhuluk', kis = {1501, 1502, 1503} },
+    { area = 'Abyssea-Misareaux', name = 'Cirein-croin', kis = {1504, 1505} },
+    { area = 'Abyssea-Misareaux', name = 'Ironclad Pulverizer', kis = {1506, 1507} },
+    { area = 'Abyssea-Misareaux', name = 'Sobek', kis = {1498, 1499, 1500} },
+    { area = 'Abyssea-Vunkerl', name = 'Bukhis', kis = {1508, 1509, 1510} },
+    { area = 'Abyssea-Vunkerl', name = 'Durinn', kis = {1513, 1514, 1515} },
+    { area = 'Abyssea-Vunkerl', name = 'Karkadann', kis = {1516, 1517} },
+    { area = 'Abyssea-Vunkerl', name = 'Sedna', kis = {1511, 1512} },
+    { area = 'Abyssea-Altepa', name = 'Bennu', kis = {1522} },
+    { area = 'Abyssea-Altepa', name = 'Dragua', kis = {1521} },
+    { area = 'Abyssea-Altepa', name = 'Orthrus', kis = {1520} },
+    { area = 'Abyssea-Altepa', name = 'Rani', kis = {1518, 1519} },
+    { area = 'Abyssea-Uleguerand', name = 'Apademak', kis = {1525} },
+    { area = 'Abyssea-Uleguerand', name = 'Isgebind', kis = {1526} },
+    { area = 'Abyssea-Uleguerand', name = 'Pantokrator', kis = {1523, 1524} },
+    { area = 'Abyssea-Uleguerand', name = 'Resheph', kis = {1527} },
+    { area = 'Abyssea-Grauberg', name = 'Alfard', kis = {1530} },
+    { area = 'Abyssea-Grauberg', name = 'Amphitrite', kis = {1532} },
+    { area = 'Abyssea-Grauberg', name = 'Azdaja', kis = {1531} },
+    { area = 'Abyssea-Grauberg', name = 'Raja', kis = {1528, 1529} },
+}
+
+-- Which NM drops each pop key item (LSB scripts/globals/abyssea.lua).
+local KI_SOURCE = {
+    [1459] = 'Gangly Gean',
+    [1460] = 'Raskovnik',
+    [1461] = 'Clingy Clare',
+    [1462] = 'Fistule',
+    [1463] = 'Kukulkan',
+    [1464] = 'Alkonost',
+    [1465] = 'Keratyrannos',
+    [1466] = 'Arimaspi',
+    [1467] = 'Tonberry Lieje',
+    [1468] = 'Ophanim',
+    [1469] = 'Treble Noctules',
+    [1470] = 'Hedetet',
+    [1471] = 'Chukwa',
+    [1472] = 'Alectryon',
+    [1473] = 'Minhocao',
+    [1474] = 'Muscaliet',
+    [1475] = 'Adze',
+    [1476] = 'Chloris',
+    [1477] = 'Glavoid',
+    [1478] = 'Trudging Thomas',
+    [1479] = 'Megantereon',
+    [1480] = 'Briareus',
+    [1481] = 'Carabosse',
+    [1482] = 'Adamastor',
+    [1483] = 'Pantagruel',
+    [1484] = 'Grandgousier',
+    [1485] = 'La Theine Liege',
+    [1486] = 'Baba Yaga',
+    [1487] = 'Nahn',
+    [1488] = 'Granite Borer',
+    [1489] = 'Blazing Eruca',
+    [1490] = 'Tunga',
+    [1491] = 'Pallid Percy',
+    [1492] = 'Amun',
+    [1493] = 'Gaizkin',
+    [1494] = 'Kharon',
+    [1495] = 'Drekavac',
+    [1496] = 'Gieremund',
+    [1497] = 'Svarbhanu',
+    [1498] = 'Minax Bugard',
+    [1499] = 'Sirrush',
+    [1500] = 'Gukumatz',
+    [1501] = 'Funereal Apkallu',
+    [1502] = 'Manohra',
+    [1503] = 'Asanbosam',
+    [1504] = 'Cep-Kamuy',
+    [1505] = 'Heqet',
+    [1506] = 'Ironclad Observer',
+    [1507] = 'Abyssic Cluster',
+    [1508] = 'Khalkotaur',
+    [1509] = 'Quasimodo',
+    [1510] = 'Lord Varney',
+    [1511] = 'Iku-Turso',
+    [1512] = 'Hrosshvalur',
+    [1513] = 'Dvalinn',
+    [1514] = 'Kadraeth the Hatespawn',
+    [1515] = 'Div-e Sepid',
+    [1516] = 'Rakshas',
+    [1517] = 'Ayravata',
+    [1518] = 'Ironclad Smiter',
+    [1519] = 'Long-Barreled Chariot',
+    [1520] = 'Amarok',
+    [1521] = 'Hazhdiha',
+    [1522] = 'Ouzelum',
+    [1523] = 'Ironclad Triturator',
+    [1524] = 'Impervious Chariot',
+    [1525] = 'Dhorme Khimaira',
+    [1526] = 'Kur',
+    [1527] = 'Awahondo',
+    [1528] = 'Ironclad Sunderer',
+    [1529] = 'Assailer Chariot',
+    [1530] = 'Ningishzida',
+    [1531] = 'Deelgeed',
+    [1532] = 'Melo Melo',
+}
+
+local KI_EXPANSIONS = {
+    { key = 'vision', label = 'VISION' },
+    { key = 'scars',  label = 'SCARS' },
+    { key = 'heroes', label = 'HEROES' },
 }
 
 local weekdays = {
@@ -499,16 +685,31 @@ local function has_required_page()
     return state.pages[2] ~= nil
 end
 
-local function count_owned()
-    local total = 0
+-- Pop key items owned / total, for one expansion ('vision', 'scars', 'heroes').
+local function count_owned(exp)
+    local owned, total = 0, 0
     for _, area in ipairs(AREAS) do
-        for _, ki in ipairs(area.kis) do
-            if has_key_item(ki[1]) then
+        if area.exp == exp then
+            for _, ki in ipairs(area.kis) do
                 total = total + 1
+                if has_key_item(ki[1]) then owned = owned + 1 end
             end
         end
     end
-    return total
+    return owned, total
+end
+
+-- Which expansion the KEY ITEMS tab shows: follows you into an Abyssea zone,
+-- otherwise whatever you last picked.
+local ki_view = { exp = 'vision', last_zone = -1 }
+local function ki_follow_zone()
+    local ok, z = pcall(function() return AshitaCore:GetMemoryManager():GetParty():GetMemberZone(0) end)
+    z = ok and tonumber(z) or 0
+    if z == ki_view.last_zone then return end
+    ki_view.last_zone = z
+    for _, area in ipairs(AREAS) do
+        if area.zone == z then ki_view.exp = area.exp end
+    end
 end
 
 local function get_ki_name(area, id)
@@ -1193,11 +1394,11 @@ end
 
 local function render_header()
     local lh = line_h()
-    local total = 0
-    for _, area in ipairs(AREAS) do total = total + #area.kis end
+    ki_follow_zone()
+    local ki_owned, ki_total = count_owned(ki_view.exp)
     local have = has_required_page()
     local tabs = {
-        { 1, 'KEY ITEMS', have and ('%d/%d'):format(count_owned(), total) or nil },
+        { 1, 'KEY ITEMS', have and ('%d/%d'):format(ki_owned, ki_total) or nil },
         { 2, 'STAGGERS', state.vana_ok and blue_window():upper() or nil },
         { 3, 'ATMA', have and ('%d/%d'):format(count_atma()) or nil },
         { 4, 'EMPYREAN', nil },
@@ -1297,6 +1498,12 @@ local function draw_zone_card(area, x, y, w, h)
             py = py + lh + 6
             for _, id in ipairs(boss.kis) do
                 local has = has_key_item(id)
+                local _, hov = hit(('##ki%d'):format(id), px - 4, py - 1, pw + 8, lh + 2)
+                if hov then
+                    dl:AddRectFilled({ px - 4, py - 1 }, { px + pw + 4, py + lh + 1 }, col(HUD.sel_fill, 0.55), 4)
+                    imgui.SetTooltip(('%s   [%s]\nPops %s\nDropped by %s  -  %s'):format(get_ki_name(area, id),
+                        has and 'owned' or 'missing', boss.name, KI_SOURCE[id] or '?', area.name:gsub('%-', ' - ', 1)))
+                end
                 draw_check(px + 6, py + lh * 0.5, 5, has)
                 text(px + 18, py, has and HUD.owned or HUD.muted, get_ki_name(area, id))
                 py = py + lh + 2
@@ -1325,11 +1532,30 @@ local function render_key_items()
         return
     end
 
+    ki_follow_zone()
+    local exp = ki_view.exp
+
+    -- Expansion picker: VISION / SCARS / HEROES
+    band('ki_exp', function(bx, by, bw)
+        local items = {}
+        for _, e in ipairs(KI_EXPANSIONS) do
+            local o, t = count_owned(e.key)
+            items[#items + 1] = { e.key, e.label, ('%d/%d'):format(o, t), (t > 0 and o == t) and HUD.owned or nil }
+        end
+        local p, _, th = seg_tabs('ki_exp', items, exp, bx, by, HUD.gold, true)
+        if p then ki_view.exp = p end
+        return th
+    end)
+    exp = ki_view.exp
+    x, y = imgui.GetCursorScreenPos()
+
     -- Summary strip (single row)
-    local total, owned, ready = 0, count_owned(), 0
-    for _, area in ipairs(AREAS) do total = total + #area.kis end
+    local owned, total = count_owned(exp)
+    local ready = 0
+    local area_exp = {}
+    for _, area in ipairs(AREAS) do area_exp[area.name] = area.exp end
     for _, boss in ipairs(BOSSES) do
-        if boss_owned(boss) == #boss.kis then ready = ready + 1 end
+        if area_exp[boss.area] == exp and boss_owned(boss) == #boss.kis then ready = ready + 1 end
     end
     local sh = lh + 16
     card_bg(x, y, w, sh, HUD.accent, 0.6)
@@ -1355,17 +1581,20 @@ local function render_key_items()
     local gap = 10
     local cols = (w >= 600) and 3 or 1
     local cw = (w - gap * (cols - 1)) / cols
+    local shown = {}
+    for _, area in ipairs(AREAS) do if area.exp == exp then shown[#shown + 1] = area end end
     if cols == 3 then
-        local h = ui.h.ki_row or 200
+        local key = 'ki_row_' .. exp
+        local h = ui.h[key] or 200
         local max_h = 0
-        for i, area in ipairs(AREAS) do
+        for i, area in ipairs(shown) do
             max_h = math.max(max_h, draw_zone_card(area, x + (i - 1) * (cw + gap), y, cw, h))
         end
-        ui.h.ki_row = max_h
+        ui.h[key] = max_h
         advance(w, h)
     else
-        for i, area in ipairs(AREAS) do
-            local key = 'ki_' .. i
+        for i, area in ipairs(shown) do
+            local key = 'ki_' .. exp .. i
             local h = ui.h[key] or 200
             local cx, cy = imgui.GetCursorScreenPos()
             ui.h[key] = draw_zone_card(area, cx, cy, cw, h)
