@@ -410,7 +410,7 @@ local function render_job_picker()
         end
         rows[#rows + 1] = row
         local active = state.job or 0
-        local picked, th = nil, line_h() + 10
+        local picked, th = nil, line_h() + 12   -- small segmented control height
         for ri, r in ipairs(rows) do
             local p = seg_tabs('empy_job' .. ri, r, active, x, y + (ri - 1) * (th + 4), HUD.gold, true)
             if p ~= nil then picked = p end
