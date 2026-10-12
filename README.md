@@ -12,7 +12,7 @@ To load it automatically, add `/addon load abyhub` to your Ashita startup script
 
 ## Tabs
 
-- **KEY ITEMS**: Abyssea pop key items per zone and boss. Shows READY when a boss can be popped.
+- **KEY ITEMS**: Abyssea pop key items per zone and boss, for Vision, Scars and Heroes. It follows you into the zone you're in. Shows READY when a boss can be popped. Hover a key item to see which NM drops it.
 - **STAGGERS**: your target, the Vana'diel clock and the blue weakness window, plus the red / blue / yellow stagger lists. Spells are coloured by element. A big popup shows when a stagger lands.
 - **ATMA**:
   - Atma per expansion and zone, following you into the zone you enter.
