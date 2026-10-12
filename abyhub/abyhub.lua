@@ -1,6 +1,6 @@
 addon.name = 'abyhub'
 addon.author = 'Laudout'
-addon.version = '2.6.0'
+addon.version = '2.7.0'
 addon.desc = 'Abyssea + Empyrean toolkit: key items, staggers, atma, lights, Empyrean armour, NMs and weapons.'
 
 require('common')
@@ -892,7 +892,9 @@ local function save_settings()
     pcall(function()
         local f = io.open(settings_file(), 'w')
         if not f then return end
-        f:write(('return { lights_auto = %s, tab = %d }\n'):format(state.lights_auto and 'true' or 'false', state.tab or 1))
+        local sz = state.win_size
+        f:write(('return { lights_auto = %s, tab = %d%s }\n'):format(state.lights_auto and 'true' or 'false', state.tab or 1,
+            sz and (', win_w = %d, win_h = %d'):format(sz[1], sz[2]) or ''))
         f:close()
     end)
 end
@@ -902,6 +904,7 @@ local function load_settings()
     if ok and type(data) == 'table' then
         if data.lights_auto ~= nil then state.lights_auto = data.lights_auto == true end
         if tonumber(data.tab) and data.tab >= 1 and data.tab <= 4 then state.tab = data.tab end
+        if tonumber(data.win_w) and tonumber(data.win_h) then state.win_size = { data.win_w, data.win_h } end
     end
 end
 
@@ -1389,7 +1392,24 @@ local function content_width()
     end
     local ki_need = 3 * (longest + 44) + 20
     local empy_min = empy.min_width()
-    return math.max(ui.header_need or 0, ki_need, empy_min, 64 * u)
+    return math.max(ki_need, empy_min, 64 * u)
+end
+
+local JOB_ABBR = { 'WAR', 'MNK', 'WHM', 'BLM', 'RDM', 'THF', 'PLD', 'DRK', 'BST', 'BRD', 'RNG',
+    'SAM', 'NIN', 'DRG', 'SMN', 'BLU', 'COR', 'PUP', 'DNC', 'SCH', 'GEO', 'RUN' }
+
+-- "RDM75/BLM37" for the logged-in character (nil if not available).
+local function job_string()
+    local ok, r = pcall(function()
+        local p = AshitaCore:GetMemoryManager():GetPlayer()
+        local mj, ml = tonumber(p:GetMainJob()) or 0, tonumber(p:GetMainJobLevel()) or 0
+        local sj, sl = tonumber(p:GetSubJob()) or 0, tonumber(p:GetSubJobLevel()) or 0
+        if not JOB_ABBR[mj] then return nil end
+        local out = ('%s%d'):format(JOB_ABBR[mj], ml)
+        if JOB_ABBR[sj] and sl > 0 then out = out .. ('/%s%d'):format(JOB_ABBR[sj], sl) end
+        return out
+    end)
+    return ok and r or nil
 end
 
 local function render_header()
@@ -1408,7 +1428,17 @@ local function render_header()
         T.logo(x + 16, y + row_h * 0.5, 11)
         local tx = x + 38
         T.title_text(tx, y, row_h, 'ABYSSEA TOOLKIT', HUD.text)
-        tx = tx + T.title_w('ABYSSEA TOOLKIT') + 26
+        tx = tx + T.title_w('ABYSSEA TOOLKIT') + 18
+
+        -- whose data this is: character name + jobs, so mains and alts are easy to tell apart
+        local who = player_name()
+        local name_w = 0
+        if who then
+            local jobs = job_string()
+            name_w = T.dot_pill_w(who, jobs)
+            T.dot_pill(nil, tx, y + (row_h - (lh + 10)) * 0.5, who, HUD.accent2, jobs, HUD.muted, false)
+            tx = tx + name_w + 18
+        end
 
         -- right: Vana'diel clock pill (day colour) + close
         local bs = lh + 8
@@ -1432,7 +1462,7 @@ local function render_header()
         local tab_y = one_row and (y + (row_h - (lh + 12)) * 0.5) or (y + row_h + 6)
         local picked = seg_tabs('aby_tab', tabs, state.tab, tab_x, tab_y, HUD.gold, false)
         if picked and picked ~= state.tab then state.tab = picked; save_settings() end
-        ui.header_need = 38 + T.title_w('ABYSSEA TOOLKIT') + 26 + tabs_w + 12
+        ui.header_need = 38 + T.title_w('ABYSSEA TOOLKIT') + 18 + (name_w > 0 and name_w + 18 or 0) + tabs_w + 12
             + (state.vana_ok and (T.dot_pill_w('00:00', 'Lightningday') + 12) or 0) + bs + 16
         return one_row and row_h or (row_h + 6 + lh + 12)
     end)
@@ -2424,34 +2454,69 @@ ashita.events.register('d3d_present', 'abyhub_present_cb', function()
 
     push_style()
 
-    -- The window size is set here every frame instead of using ImGui's auto-resize:
-    -- width from the layout, height from last frame's content (capped at 85% of the
-    -- screen, then it scrolls). Auto-resize could blow the window up while dragging.
+    -- Size: you can resize the window (bottom-right corner). It starts at a size that
+    -- fits the content (or the size you left it at), can't go below the width the
+    -- layout needs, and can't be stretched past the game window's edges.
     local io_ok, io = pcall(imgui.GetIO)
-    local sw = (io_ok and io and io.DisplaySize and io.DisplaySize.x) or 1920
     local sh = (io_ok and io and io.DisplaySize and io.DisplaySize.y) or 1080
     local PAD_X, PAD_Y, SCROLL_W = 14, 12, 12
-    local cw = content_width() + ui.inset * 2
-    local max_h = math.floor(sh * 0.85)
-    local need_h = (win.content_h or 300) + PAD_Y * 2
-    local scrolls = need_h > max_h
-    local ww = math.min(cw + PAD_X * 2 + (scrolls and SCROLL_W or 0), sw - 20)
-    local wh = math.min(need_h, max_h)
-    imgui.SetNextWindowSize({ ww, wh }, ImGuiCond_Always)
+    local min_cw = content_width() + ui.inset * 2
+    local min_w = min_cw + PAD_X * 2 + SCROLL_W
+    local fit_w = math.max(min_cw, (ui.header_need or 0) + ui.inset * 2) + PAD_X * 2
+    local fit_h = math.min((win.content_h or 300) + PAD_Y * 2, math.floor(sh * 0.85))
     if win_reset_request then win.reset, win_reset_request = true, false end
+    local vp = main_viewport()
+    if win.reset or not win.size then
+        -- first open (or /aby reset): saved size, else fit the content. Fitting runs
+        -- for a few frames, because the content is only measured once it's drawn.
+        local sz = (not win.reset) and state.win_size or nil
+        win.size = sz and { sz[1], sz[2] } or { fit_w, fit_h }
+        win.fit_frames = sz and 0 or 3
+        win.set_size = true
+    elseif (win.fit_frames or 0) > 0 then
+        win.fit_frames = win.fit_frames - 1
+        win.size = { fit_w, fit_h }
+        win.set_size = true
+    end
     if win.reset then
-        local vp = main_viewport()
-        win.pos = { vp[1] + (vp[3] - ww) * 0.5, vp[2] + (vp[4] - wh) * 0.5 }
+        win.pos = { vp[1] + (vp[3] - win.size[1]) * 0.5, vp[2] + (vp[4] - win.size[2]) * 0.5 }
         win.reset, win.drag = false, nil
     end
-    place_window(win, ww, wh)
+    -- room left to the right / below the window, so a resize can't cross the edge
+    local px, py = (win.pos or { vp[1], vp[2] })[1], (win.pos or { vp[1], vp[2] })[2]
+    local max_w = math.max(min_w, vp[1] + vp[3] - px)
+    local max_h = math.max(160, vp[2] + vp[4] - py)
+    if type(imgui.SetNextWindowSizeConstraints) == 'function' then
+        imgui.SetNextWindowSizeConstraints({ math.min(min_w, max_w), 160 }, { max_w, max_h })
+    end
+    if win.set_size then
+        imgui.SetNextWindowSize({ math.min(win.size[1], max_w), math.min(win.size[2], max_h) }, ImGuiCond_Always)
+        win.set_size = false
+    end
+    place_window(win, win.size[1], win.size[2])
 
-    local flags = bit.bor(ImGuiWindowFlags_NoTitleBar, ImGuiWindowFlags_NoCollapse, ImGuiWindowFlags_NoResize,
+    local flags = bit.bor(ImGuiWindowFlags_NoTitleBar, ImGuiWindowFlags_NoCollapse,
         ImGuiWindowFlags_NoMove, NO_DOCK)
     undock_next()
     if imgui.Begin('Abyssea Toolkit##abyhub_combined', state.visible, flags) then
         pcall(imgui.SetScrollX, 0)      -- never scroll sideways
         local _, top = imgui.GetCursorScreenPos()
+        -- current size (after any resize this frame); remember it
+        local ww, wh = imgui.GetWindowSize()
+        if tonumber(ww) and tonumber(wh) then
+            if (win.fit_frames or 0) == 0 and (not state.win_size or math.abs(state.win_size[1] - ww) > 0.5 or math.abs(state.win_size[2] - wh) > 0.5) then
+                state.win_size = { math.floor(ww), math.floor(wh) }
+                win.size = { ww, wh }
+                win.size_dirty = os.clock()
+            end
+        end
+        if win.size_dirty and os.clock() - win.size_dirty > 1.0 and not call(imgui.IsMouseDown, 0) then
+            win.size_dirty = nil
+            save_settings()
+        end
+        -- content fills the window width (never narrower than the layout needs)
+        local scrolling = (win.content_h or 0) > (tonumber(wh) or 0) - PAD_Y * 2
+        local cw = math.max(min_cw, (tonumber(ww) or fit_w) - PAD_X * 2 - (scrolling and SCROLL_W or 0))
         T.draw_window_frame()
         T.begin_content(cw)
         render_header()
