@@ -8,6 +8,10 @@ local bit = require('bit')
 local data = require('empydata')
 -- Empyrean weapons: CatsEyeXI Magian trial chains (tools/build_weapons.py).
 local wdata = require('empyweapons')
+-- Weapon icons from the game's own item data.
+local icons = require('abyicons')
+-- Weapons view sizes: icons at the game's own 32px, text 20% larger than the other tabs.
+local WICON, WICON_HEAD, WTEXT = 32, 40, 1.2
 
 local T = require('abytheme')
 local HUD, ui, CORNERS_ALL = T.HUD, T.ui, T.CORNERS_ALL
@@ -237,6 +241,7 @@ local function weapon_state(w)
         for _, id in ipairs(w.stages[sl[1]] or {}) do
             for _, c in ipairs(copies[id] or {}) do
                 st.idx, st.stage, st.slot, st.done = n + 1, sl[2], c.slot or st.slot, false
+                st.stage_id = id
             end
         end
     end
@@ -354,7 +359,8 @@ local function measure_layout()
                 or ('Trade %dx %s'):format(o.qty, o.item)))
         end
     end
-    L.weapons = 18 + L.w_no + L.gap + L.w_hold + L.gap + L.w_obj + L.gap + L.w_stat + 8
+    L.w_icon = WICON            -- weapon icon in the stages / completed rows
+    L.weapons = 18 + L.w_no + L.gap + L.w_icon + 6 + L.w_hold + L.gap + L.w_obj + L.gap + L.w_stat + 8
 
     L.min = math.max(L.nms, L.armor_one, L.weapons, 52 * text_w('0'))
     L.want = math.max(L.min, L.header, L.armor_two)
@@ -743,15 +749,29 @@ local function counts()
     return prog, done
 end
 
--- Weapon heading: diamond, name, skill  >  jobs | equip slot, status tag
+-- Item id whose icon stands for the Empyrean: the stage you own, else Lv80.
+local function empy_icon_id(w, st)
+    return st.stage_id or (w.stages['80'] or {})[1]
+end
+
+-- Weapon heading: icon, name, skill  >  jobs | equip slot, status tag
 local function weapon_heading(x, y, pw, w)
     local lh = line_h()
     local st = wstate_of(w)
     local tag, tc = status_of(w)
     local scale = 1.22
-    diamond(x + 7, y + lh * 0.55, 7, HUD.lavender, false, 0.6)
-    text(x + 22, y - 1, HUD.lavender, w.name, scale)
-    local sx = x + 22 + text_w(w.name) * scale + 14
+    -- the Empyrean's icon (the stage you own, else Lv80)
+    local isz = WICON_HEAD
+    local nx = x + 22
+    local iy = y - 4
+    y = y + math.max(0, (isz - lh) * 0.5 - 4)      -- text centred on the icon
+    if icons.draw(empy_icon_id(w, st), x, iy, isz, 1, HUD.lavender) then
+        nx = x + isz + 10
+    else
+        diamond(x + 7, y + lh * 0.55, 7, HUD.lavender, false, 0.6)
+    end
+    text(nx, y - 1, HUD.lavender, w.name, scale)
+    local sx = nx + text_w(w.name) * scale + 14
     text(sx, y, HUD.muted, w.skill)
     sx = sx + text_w(w.skill) + 12
     -- small arrow
@@ -763,7 +783,7 @@ local function weapon_heading(x, y, pw, w)
     local px = x + pw - pill_w(tag)
     pill(px, y, tag, tc, 0.10)
     if st.slot then pill(px - 8 - pill_w(st.slot), y, st.slot, HUD.owned, 0.10) end
-    return lh + 6
+    return math.max(lh + 6, iy + isz + 2 - (y - math.max(0, (isz - lh) * 0.5 - 4)))
 end
 
 -- Framed footer note inside a panel.
@@ -834,13 +854,15 @@ local function render_stages(here_zone)
 
         -- table
         local L = ui.layout
-        local rh = lh + 10
+        local rh = math.max(lh + 10, WICON + 6)
         local tx, tw = x, pw
         local c_ic = tx + 14
         local c_no = tx + 30
         local d1 = c_no + L.w_no + 18
         local c_hold = d1 + 14
-        local d2 = c_hold + L.w_hold + 18
+        local isz = math.min(L.w_icon, rh - 4)     -- weapon icon, then its name
+        local c_name = c_hold + L.w_icon + 6
+        local d2 = c_name + L.w_hold + 18
         local c_obj = d2 + 14
         local c_end = tx + tw - 12
         local d3 = c_end - L.w_stat - 16
@@ -883,7 +905,8 @@ local function render_stages(here_zone)
 
             local dim = passed and 0.55 or 1
             text(c_no, ty, rgba(HUD.subtext, dim), tostring(s.trial))
-            text(c_hold, ty, rgba(cur and HUD.text or HUD.accent2, dim), fit(s.label, d2 - c_hold - 8))
+            icons.draw(s.id, c_hold, ry + (rh - isz) * 0.5, isz, passed and 0.6 or 1, cur and HUD.edge_hi or nil)
+            text(c_name, ty, rgba(cur and HUD.text or HUD.accent2, dim), fit(s.label, d2 - c_name - 8))
             local ot = fit(obj_text(o), obj_w)
             text(c_obj, ty, rgba(obj_col(o), dim), ot)
             if o.zone and o.zone == here_zone and not passed then
@@ -917,7 +940,8 @@ local function render_stages(here_zone)
         if got then diamond(c_ic, ry + rh * 0.5, 6, HUD.gold, true, 0.6 + pulse(2) * 0.4)
         else diamond(c_ic, ry + rh * 0.5, 5, HUD.lavender, false) end
         text(c_no, ty, HUD.faint, '-')
-        text(c_hold, ty, got and HUD.gold or HUD.accent2, w.name)
+        icons.draw(empy_icon_id(w, st), c_hold, ry + (rh - isz) * 0.5, isz, 1, got and HUD.gold or nil)
+        text(c_name, ty, got and HUD.gold or HUD.accent2, w.name)
         text(c_obj, ty, HUD.subtext, fit('Stage 2 and 3: not on ' .. (wdata.source or 'the server') .. ' yet', obj_w))
         rtext(c_end, ty, got and HUD.gold or HUD.subtext, got and 'OWNED' or '-')
         py = py + th + 10
@@ -956,7 +980,7 @@ local function render_completed()
         py = py + 3 + 10
 
         local L = ui.layout
-        local rh = lh + 10
+        local rh = math.max(lh + 10, WICON + 6)
         local rows = math.max(1, #done)
         local th = rows * rh + 4
         frame(x, py, pw, th, { k = 5, fill = HUD.inset, glow = 0.3, alpha = 0.55 })
@@ -971,9 +995,15 @@ local function render_completed()
             if hv then dl:AddRectFilled({ x + 3, ry + 1 }, { x + pw - 3, ry + rh - 1 }, col(HUD.sel_fill, 0.45)) end
             if i < #done then dl:AddLine({ x + 6, ry + rh }, { x + pw - 6, ry + rh }, col(HUD.row_line), 1) end
             local ty = ry + (rh - lh) * 0.5
-            diamond(x + 14, ry + rh * 0.5, 5, HUD.gold, true)
-            text(x + 30, ty, HUD.text, w.name)
-            local c2 = x + 30 + L.w_wname + 20
+            local isz = math.min(L.w_icon, rh - 4)
+            local nx = x + 30
+            if icons.draw(empy_icon_id(w, st), x + 8, ry + (rh - isz) * 0.5, isz, 1, HUD.gold) then
+                nx = x + 8 + isz + 8
+            else
+                diamond(x + 14, ry + rh * 0.5, 5, HUD.gold, true)
+            end
+            text(nx, ty, HUD.text, w.name)
+            local c2 = nx + L.w_wname + 20
             text(c2, ty, HUD.muted, w.skill)
             text(c2 + L.w_skill + 20, ty, HUD.accent2, table.concat(w.jobs, ' '))
             local tag = st.stage or 'Lv80'
@@ -1006,8 +1036,22 @@ end
 
 local function render_weapons()
     local here = player_zone_name()
-    if state.wtab == 3 then render_completed()
-    else render_stages(here) end
+    -- bigger text here: scale the font and the measured weapon columns with it
+    local base = ui.layout
+    local scaled = pcall(imgui.SetWindowFontScale, WTEXT)
+    if scaled and base then
+        local L = {}
+        for k, v in pairs(base) do L[k] = v end
+        for _, k in ipairs({ 'w_no', 'w_hold', 'w_obj', 'w_stat', 'w_wname', 'w_skill' }) do L[k] = base[k] * WTEXT end
+        ui.layout = L
+    end
+    local ok, err = pcall(function()
+        if state.wtab == 3 then render_completed()
+        else render_stages(here) end
+    end)
+    if scaled then pcall(imgui.SetWindowFontScale, 1.0) end
+    ui.layout = base
+    if not ok then error(err, 0) end
 end
 
 --------------------------------------------------------------------------------

@@ -65,6 +65,7 @@ Drag either window by any empty part of it. Resize the main window from its bott
 | `abyhub.lua` | main addon: windows, commands, Abyssea tabs, lights, stagger popups |
 | `abyempy.lua` | Empyrean tab |
 | `abytheme.lua` | drawing / colours (edit the `HUD` table to recolour) |
+| `abyicons.lua` | item icons for the Empyrean weapons, read from the game's own item data |
 | `abyatma.lua` | atma names, sources and effects |
 | `empydata.lua` | Empyrean armour stats and NM drop data |
 | `empyweapons.lua` | Empyrean weapon trial paths |
