@@ -1,6 +1,6 @@
 addon.name = 'abyhub'
 addon.author = 'Laudout'
-addon.version = '2.4.0'
+addon.version = '2.5.0'
 addon.desc = 'Abyssea + Empyrean toolkit: key items, staggers, atma, lights, Empyrean armour, NMs and weapons.'
 
 require('common')
@@ -678,8 +678,10 @@ local function save_lights()
     end)
 end
 
--- Small persistent settings (lights bar on/off).
-state.lights_bar = { true }
+-- Small persistent settings. lights_auto: show the lights bar automatically
+-- while you're in an Abyssea zone (hidden everywhere else).
+state.lights_auto = true
+state.lights_open = { true }   -- ImGui window open flag for the lights bar
 
 local function settings_file()
     return ('%s/abyhub_settings.lua'):format(addon.path)
@@ -689,7 +691,7 @@ local function save_settings()
     pcall(function()
         local f = io.open(settings_file(), 'w')
         if not f then return end
-        f:write(('return { lights_bar = %s, tab = %d }\n'):format(state.lights_bar[1] and 'true' or 'false', state.tab or 1))
+        f:write(('return { lights_auto = %s, tab = %d }\n'):format(state.lights_auto and 'true' or 'false', state.tab or 1))
         f:close()
     end)
 end
@@ -697,7 +699,7 @@ end
 local function load_settings()
     local ok, data = pcall(dofile, settings_file())
     if ok and type(data) == 'table' then
-        if data.lights_bar ~= nil then state.lights_bar[1] = data.lights_bar == true end
+        if data.lights_auto ~= nil then state.lights_auto = data.lights_auto == true end
         if tonumber(data.tab) and data.tab >= 1 and data.tab <= 4 then state.tab = data.tab end
     end
 end
@@ -1042,7 +1044,7 @@ local HELP = {
     '/aby alerts [target|any|off] stagger popups',
     '/aby test [red|yellow|blue|white]   test a stagger popup',
     '/aby reset                   re-centre the window',
-    '/abylights                   lights bar on / off',
+    '/abylights                   lights bar on / off (shows by itself in Abyssea)',
     '/abylights print             lights to chat',
 }
 
@@ -1073,9 +1075,9 @@ ashita.events.register('command', 'abyhub_command_cb', function(e)
                 learned_ids[z] and tostring(learned_ids[z][3]) or 'no',
                 last_unmatched_02a and ('%d (tier %d, %.0fs ago)'):format(last_unmatched_02a.mes, last_unmatched_02a.tier, os.clock() - last_unmatched_02a.t) or 'none'))
         else
-            state.lights_bar[1] = not state.lights_bar[1]
+            state.lights_auto = not state.lights_auto
             save_settings()
-            msg('Lights bar ' .. (state.lights_bar[1] and 'on.' or 'off.'))
+            msg(state.lights_auto and 'Lights bar on: shows automatically in Abyssea.' or 'Lights bar off.')
         end
         return
     end
@@ -2127,8 +2129,8 @@ local lights_h = nil   -- lights window content height, measured each frame
 local lights_win = {}  -- lights window position (kept on screen)
 
 render_lights_window = function()
-    if not state.lights_bar[1] then return end
-    if not in_abyssea() and not state.lights_known then return end
+    -- Only while you're in an Abyssea zone (and the auto lights bar is on).
+    if not state.lights_auto or not in_abyssea() then return end
 
     push_style()
     imgui.PushStyleVar(ImGuiStyleVar_WindowPadding, { 0, 0 })
@@ -2143,7 +2145,8 @@ render_lights_window = function()
         ImGuiWindowFlags_NoScrollbar, ImGuiWindowFlags_NoScrollWithMouse, ImGuiWindowFlags_NoFocusOnAppearing,
         ImGuiWindowFlags_NoMove, NO_DOCK)
     undock_next()
-    if imgui.Begin('Abyssea Lights##abyhub_lights', state.lights_bar, flags) then
+    state.lights_open[1] = true
+    if imgui.Begin('Abyssea Lights##abyhub_lights', state.lights_open, flags) then
         pcall(imgui.SetScrollX, 0)
         pcall(imgui.SetScrollY, 0)
         local saved_cw, saved_left = ui.cw, ui.left_x
