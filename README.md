@@ -26,7 +26,7 @@ To load it automatically, add `/addon load abyhub` to your Ashita startup script
     - STAGES: the full 10-trial path. In the weapon list, a green light means you have the Empyrean and a yellow light means you're working on it.
     - COMPLETED: the Empyreans you've finished.
 
-The **lights bar** (Abyssea lights and visitant time) is its own small window. Toggle it with `/abylights`.
+The **lights bar** (Abyssea lights and visitant time) is its own small window. It appears automatically when you enter an Abyssea zone and hides when you leave. `/abylights` turns that on or off.
 
 Drag either window by any empty part of it.
 
@@ -45,7 +45,7 @@ Drag either window by any empty part of it.
 /aby reset                    re-centre the window
 /aby help                     list commands
 
-/abylights                    lights bar on / off
+/abylights                    auto lights bar on / off
 /abylights print              lights to chat
 ```
 
