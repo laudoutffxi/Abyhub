@@ -1,6 +1,6 @@
 # abyhub
 
-An Abyssea + Empyrean toolkit addon for **Ashita v4** (Final Fantasy XI), in a navy / blue framed theme.
+An Abyssea + Empyrean toolkit addon for **Ashita v4** (Final Fantasy XI), styled after YunaGearOpt (flat navy, periwinkle accent, Segoe UI).
 
 ## Install
 
@@ -56,6 +56,7 @@ Drag either window by any empty part of it. Resize the main window from its bott
 - **Key item tabs:** these need key item data from the server. If a tab says *waiting for key item data*, zone once after loading the addon.
 - **Lights and visitant time:** read from `/heal` in Abyssea, and estimated between checks.
 - **Saved settings:** the addon writes `abyhub_settings.lua` (tab, window size, lights bar), `abyhub_empyrean.lua` and `lights_<character>.lua` into its own folder. Delete them to reset.
+- **Font:** uses Segoe UI from your Windows Fonts folder (nothing is bundled). If it can't be loaded, the game's ImGui font is used.
 
 ## Files
 

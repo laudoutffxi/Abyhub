@@ -1,6 +1,6 @@
 addon.name = 'abyhub'
 addon.author = 'Laudout'
-addon.version = '2.7.0'
+addon.version = '2.8.0'
 addon.desc = 'Abyssea + Empyrean toolkit: key items, staggers, atma, lights, Empyrean armour, NMs and weapons.'
 
 require('common')
@@ -1412,6 +1412,17 @@ local function job_string()
     return ok and r or nil
 end
 
+-- Current zone name (from the game's resources), or nil.
+local function zone_label()
+    local z = player_zone()
+    if not z or z == 0 then return nil end
+    local ok, name = pcall(function()
+        return AshitaCore:GetResourceManager():GetString('zones.names', z)
+    end)
+    if ok and type(name) == 'string' and name ~= '' then return name end
+    return nil
+end
+
 local function render_header()
     local lh = line_h()
     ki_follow_zone()
@@ -1424,49 +1435,58 @@ local function render_header()
         { 4, 'EMPYREAN', nil },
     }
     band('aby_hdr', function(x, y, w)
-        local row_h = lh + 18
-        T.logo(x + 16, y + row_h * 0.5, 11)
-        local tx = x + 38
-        T.title_text(tx, y, row_h, 'ABYSSEA TOOLKIT', HUD.text)
-        tx = tx + T.title_w('ABYSSEA TOOLKIT') + 18
-
-        -- whose data this is: character name + jobs, so mains and alts are easy to tell apart
-        local who = player_name()
-        local name_w = 0
-        if who then
-            local jobs = job_string()
-            name_w = T.dot_pill_w(who, jobs)
-            T.dot_pill(nil, tx, y + (row_h - (lh + 10)) * 0.5, who, HUD.accent2, jobs, HUD.muted, false)
-            tx = tx + name_w + 18
-        end
-
-        -- right: Vana'diel clock pill (day colour) + close
-        local bs = lh + 8
+        -- row 1: two-tone title, Vana'diel clock and close on the right
+        local row_h = math.floor(lh * 1.5 + 6)
+        T.title_text(x, y, row_h, 'ABYSSEA TOOLKIT', HUD.text)
+        local title_w = T.title_w('ABYSSEA TOOLKIT')
+        local bs = lh + 6
         local bx = x + w - bs
         if T.close_button(bx, y + (row_h - bs) * 0.5, bs) then state.visible[1] = false end
-        local right = bx - 12
+        local right = bx - 10
+        local clock_w = 0
         if state.vana_ok then
             local day = current_day()
             local dc = ELEMENT_COLOR[DAY_ELEMENT[day] or ''] or HUD.text
             local clock = ('%02d:%02d'):format(state.vana_hour, state.vana_minute)
-            local cw = T.dot_pill_w(clock, day)
-            right = right - cw
-            T.dot_pill(nil, right, y + (row_h - (lh + 10)) * 0.5, clock, dc, day, dc, true)
-            right = right - 12
+            clock_w = T.dot_pill_w(clock, day)
+            right = right - clock_w
+            T.dot_pill(nil, right, y + (row_h - (lh + 8)) * 0.5, clock, dc, day, dc, true)
         end
 
-        -- tabs between title and clock (second row if they don't fit)
+        -- row 2: whose data this is (name bright, so mains and alts are easy to tell
+        -- apart), then jobs and zone in the muted info colour
+        local iy = y + row_h + 2
+        local who = player_name()
+        local info_w = 0
+        if who then
+            text(x, iy, HUD.text, who)
+            local ix = x + text_w(who)
+            local rest = {}
+            local jobs = job_string()
+            if jobs and jobs ~= '' then rest[#rest + 1] = jobs end
+            local zn = zone_label()
+            if zn then rest[#rest + 1] = zn end
+            if #rest > 0 then
+                local s = '  \194\183  ' .. table.concat(rest, '  \194\183  ')
+                text(ix, iy, HUD.muted, s)
+                ix = ix + text_w(s)
+            end
+            info_w = ix - x
+        else
+            text(x, iy, HUD.muted, 'Not logged in')
+        end
+
+        -- row 3: tabs as a segmented control
+        local ty = iy + lh + 10
         local tabs_w = seg_width(tabs, false)
-        local one_row = tx + tabs_w <= right
-        local tab_x = one_row and tx or x
-        local tab_y = one_row and (y + (row_h - (lh + 12)) * 0.5) or (y + row_h + 6)
-        local picked = seg_tabs('aby_tab', tabs, state.tab, tab_x, tab_y, HUD.gold, false)
+        local picked, _, th = seg_tabs('aby_tab', tabs, state.tab, x, ty, HUD.accent, false)
         if picked and picked ~= state.tab then state.tab = picked; save_settings() end
-        ui.header_need = 38 + T.title_w('ABYSSEA TOOLKIT') + 18 + (name_w > 0 and name_w + 18 or 0) + tabs_w + 12
-            + (state.vana_ok and (T.dot_pill_w('00:00', 'Lightningday') + 12) or 0) + bs + 16
-        return one_row and row_h or (row_h + 6 + lh + 12)
-    end)
+        ui.header_need = math.max(title_w + 20 + (state.vana_ok and (T.dot_pill_w('00:00', 'Lightningday') + 10) or 0) + bs,
+            info_w, tabs_w) + 12
+        return ty + th - y + 4
+    end, { line = true })
 end
+
 
 --------------------------------------------------------------------------------
 -- Key items tab
@@ -2392,6 +2412,7 @@ render_lights_window = function()
     if not state.lights_auto or not in_abyssea() then return end
 
     push_style()
+    local font_pushed = T.push_font()
     imgui.PushStyleVar(ImGuiStyleVar_WindowPadding, { 0, 0 })
     imgui.PushStyleColor(ImGuiCol_WindowBg, { 0, 0, 0, 0 })
     imgui.PushStyleColor(ImGuiCol_Border, { 0, 0, 0, 0 })
@@ -2421,6 +2442,7 @@ render_lights_window = function()
     imgui.End()
     imgui.PopStyleColor(2)
     imgui.PopStyleVar(1)
+    T.pop_font(font_pushed)
     pop_style()
 end
 
@@ -2453,6 +2475,7 @@ ashita.events.register('d3d_present', 'abyhub_present_cb', function()
     if not state.visible[1] then return end
 
     push_style()
+    local font_pushed = T.push_font()
 
     -- Size: you can resize the window (bottom-right corner). It starts at a size that
     -- fits the content (or the size you left it at), can't go below the width the
@@ -2537,10 +2560,12 @@ ashita.events.register('d3d_present', 'abyhub_present_cb', function()
     end
 
     imgui.End()
+    T.pop_font(font_pushed)
     pop_style()
 end)
 
 ashita.events.register('load', 'abyhub_load_cb', function()
+    T.load_font()
     init_vana_time()
     load_settings()
     empy.load()
