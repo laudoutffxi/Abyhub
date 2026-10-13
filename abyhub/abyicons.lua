@@ -5,7 +5,7 @@ local d3d = require('d3d8')
 local imgui = require('imgui')
 
 local M = {}
-local cache = {}   -- id -> { tex, ptr, tex2, ptr2 } or false (no icon)
+local cache = {}   -- id -> { tex, ptr, [tex2, ptr2, tex4, ptr4] } or false (no icon)
 
 -- The game's icons are quite dark on our navy panels, so each one is brightened
 -- once when it loads: mid-tones lifted with a gamma curve (shadows stay shadows,
@@ -41,31 +41,17 @@ end
 
 -- Scale2x: doubles a pixel-art image without blur. Each pixel becomes 2x2, and
 -- a corner takes a neighbour's colour where two neighbours agree, so diagonal
--- edges stay smooth instead of turning into blocks. `tex` must already hold the
--- image point-upscaled to twice its size (every source pixel as a 2x2 block).
-function M.scale2x(tex)
-    local dres, desc = tex:GetLevelDesc(0)
-    if dres ~= ffi.C.S_OK or desc == nil then error('GetLevelDesc returned ' .. tostring(dres)) end
-    local W, H = tonumber(desc.Width), tonumber(desc.Height)
-    local w, h = math.floor(W / 2), math.floor(H / 2)
-    local res, rect = tex:LockRect(0, nil, 0)
-    if res ~= ffi.C.S_OK or rect == nil then error('LockRect returned ' .. tostring(res)) end
-    local bits, pitch = ffi.cast('uint8_t*', rect.pBits), tonumber(rect.Pitch)
-    local function at(yy) return ffi.cast('uint32_t*', bits + yy * pitch) end
-    -- source pixels = the top-left of each 2x2 block
-    local src = {}
-    for y = 0, h - 1 do
-        local row, r = at(y * 2), {}
-        for x = 0, w - 1 do r[x] = row[x * 2] end
-        src[y] = r
-    end
+-- edges stay smooth instead of turning into blocks. src[y][x] (0-based) -> 2x.
+local function epx(src, w, h)
     local function px(x, y)
         if x < 0 then x = 0 elseif x >= w then x = w - 1 end
         if y < 0 then y = 0 elseif y >= h then y = h - 1 end
         return src[y][x]
     end
+    local dst = {}
     for y = 0, h - 1 do
-        local top, bot = at(y * 2), at(y * 2 + 1)
+        local top, bot = {}, {}
+        dst[y * 2], dst[y * 2 + 1] = top, bot
         for x = 0, w - 1 do
             local P = src[y][x]
             local A, B, C, D = px(x, y - 1), px(x + 1, y), px(x - 1, y), px(x, y + 1)
@@ -80,8 +66,35 @@ function M.scale2x(tex)
             bot[x * 2], bot[x * 2 + 1] = e2, e3
         end
     end
+    return dst
+end
+
+-- Enlarge `tex` (holding the icon point-upscaled `factor` times: 2 or 4) with
+-- Scale2x applied once or twice, in place.
+function M.upscale(tex, factor)
+    local dres, desc = tex:GetLevelDesc(0)
+    if dres ~= ffi.C.S_OK or desc == nil then error('GetLevelDesc returned ' .. tostring(dres)) end
+    local W, H = tonumber(desc.Width), tonumber(desc.Height)
+    local w, h = math.floor(W / factor), math.floor(H / factor)
+    local res, rect = tex:LockRect(0, nil, 0)
+    if res ~= ffi.C.S_OK or rect == nil then error('LockRect returned ' .. tostring(res)) end
+    local bits, pitch = ffi.cast('uint8_t*', rect.pBits), tonumber(rect.Pitch)
+    local function at(yy) return ffi.cast('uint32_t*', bits + yy * pitch) end
+    local img = {}
+    for y = 0, h - 1 do
+        local row, r = at(y * factor), {}
+        for x = 0, w - 1 do r[x] = row[x * factor] end
+        img[y] = r
+    end
+    local f = 1
+    while f < factor do img = epx(img, w * f, h * f); f = f * 2 end
+    for y = 0, H - 1 do
+        local row, r = at(y), img[y]
+        for x = 0, W - 1 do row[x] = r[x] end
+    end
     tex:UnlockRect(0)
 end
+M.scale2x = function(tex) return M.upscale(tex, 2) end
 
 local D3DX_FILTER_POINT = 2
 
@@ -94,20 +107,22 @@ local function load_texture(item, size, filter)
     return d3d.gc_safe_release(ffi.cast('IDirect3DTexture8*', ptr[0]))
 end
 
--- The sharp double-size copy, made the first time an icon is drawn bigger than 32px.
-local function get2x(id, ic)
-    if ic.tex2 ~= nil then return ic.tex2 or nil end
-    ic.tex2 = false
+-- Sharp enlarged copies (factor 2 = 64px, 4 = 128px), made the first time an
+-- icon is drawn big enough to need one.
+local function get_big(id, ic, factor)
+    local key = 'tex' .. factor
+    if ic[key] ~= nil then return ic[key] and ic['ptr' .. factor] or nil end
+    ic[key] = false
     pcall(function()
         local item = AshitaCore:GetResourceManager():GetItemById(id)
         if item == nil or item.Bitmap == nil or (item.ImageSize or 0) == 0 then return end
-        local tex = load_texture(item, 64, D3DX_FILTER_POINT)
+        local tex = load_texture(item, 32 * factor, D3DX_FILTER_POINT)
         if tex == nil then return end
-        if not pcall(M.scale2x, tex) then return end   -- blocky is worse than the 1x copy
+        if not pcall(M.upscale, tex, factor) then return end   -- blocky is worse than the 1x copy
         pcall(M.brighten, tex)
-        ic.tex2, ic.ptr2 = tex, tonumber(ffi.cast('uint32_t', tex))
+        ic[key], ic['ptr' .. factor] = tex, tonumber(ffi.cast('uint32_t', tex))
     end)
-    return ic.tex2 or nil
+    return ic[key] and ic['ptr' .. factor] or nil
 end
 
 function M.get(id)
@@ -132,11 +147,14 @@ function M.draw(id, x, y, size, alpha, edge)
     local ic = M.get(id)
     if ic == nil then return false end
     alpha = alpha or 1
-    -- Sharpness: land on whole pixels (a half-pixel offset blurs every texel),
-    -- and anything drawn bigger than the game's 32px uses the Scale2x copy.
+    -- Sharpness: land on whole pixels (a half-pixel offset blurs every texel).
     x, y = math.floor(x + 0.5), math.floor(y + 0.5)
+    -- Pick the copy the draw size shrinks from by at most half (a smooth, even
+    -- downscale): 32px native, up to 64px from the 2x copy, bigger from the 4x.
     local ptr = ic.ptr
-    if size > 32 and get2x(id, ic) then ptr = ic.ptr2 end
+    if size > 32 then
+        ptr = (size >= 64 and get_big(id, ic, 4)) or get_big(id, ic, 2) or ic.ptr
+    end
     local dl = imgui.GetWindowDrawList()
     dl:AddRectFilled({ x - 1, y - 1 }, { x + size + 1, y + size + 1 },
         imgui.GetColorU32({ 0.20, 0.22, 0.30, 0.9 * alpha }), 3)

@@ -1,6 +1,6 @@
 addon.name = 'abyhub'
 addon.author = 'Laudout'
-addon.version = '3.0.2'
+addon.version = '3.0.3'
 addon.desc = 'Abyssea + Empyrean toolkit: key items, staggers, atma, lights, Empyrean armour, NMs and weapons.'
 
 require('common')
