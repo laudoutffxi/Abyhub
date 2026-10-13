@@ -13,7 +13,7 @@ local icons = require('abyicons')
 -- Weapons view sizes: icons at the game's own 32px, text 20% larger than the other tabs.
 local WICON, WICON_HEAD, WTEXT = 32, 48, 1.2
 -- Armour tab icon sizes: set gallery, tier tiles, hover card (the "full" view).
-local GAL_ICON, TILE_ICON, TIP_ICON = 32, 32, 64
+local GAL_ICON, TILE_ICON, TIP_ICON = 32, 32, 48
 
 local T = require('abytheme')
 local HUD, ui, CORNERS_ALL = T.HUD, T.ui, T.CORNERS_ALL
