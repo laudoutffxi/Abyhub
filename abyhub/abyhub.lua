@@ -1317,7 +1317,7 @@ ashita.events.register('command', 'abyhub_command_cb', function(e)
         open(3)
     elseif sub == 'empyrean' or sub == 'empy' then
         open(4)
-    elseif sub == 'armor' or sub == 'armour' or sub == 'nms' or sub == 'weapons' or sub == 'job' or sub == 'refresh' then
+    elseif sub == 'armor' or sub == 'sets' or sub == 'armour' or sub == 'nms' or sub == 'weapons' or sub == 'job' or sub == 'refresh' then
         if empy.command(rest) then open(4) end
     elseif sub == 'compact' then
         if state.tab == 4 then
