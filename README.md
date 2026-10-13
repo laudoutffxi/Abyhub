@@ -20,7 +20,7 @@ To load it automatically, add `/addon load abyhub` to your Ashita startup script
   - Hover an atma to see its effects and where it comes from.
   - Hover an abyssite to see what it does.
 - **EMPYREAN**. The job pill on the right follows your main job; click it to pick any job.
-  - **ARMOR**: Base / +1 / +2 stats per slot, with seal and +2 material counts from your bags.
+  - **ARMOR**: a gallery of all 20 Empyrean sets with item icons and your progress; click a set for its pieces as NQ / +1 / +2 tiles. Hover a picture for the item's full in-game text. With compact off, each piece also shows a stat comparison and seal / +2 material counts from your bags.
   - **NMS**: the Abyssea NMs that drop each seal or +2 item, with drop rates and estimated kills.
   - **WEAPONS**: Empyrean weapon Magian trials (CatsEyeXI paths). Your current trial is detected automatically from the weapon in your bags.
     - STAGES: the full 10-trial path. In the weapon list, a green light means you have the Empyrean and a yellow light means you're working on it.
@@ -37,7 +37,7 @@ Drag either window by any empty part of it. Resize the main window from its bott
 ```
 /aby                          show / hide the window
 /aby ki | stagger | atma | empyrean     open a tab
-/aby armor | nms | weapons [stages|completed]     Empyrean views
+/aby sets | armor | nms | weapons [stages|completed]     Empyrean views (sets = all armour sets, armor = your set)
 /aby job <JOB|auto>           Empyrean: show a job (auto = follow main job)
 /aby refresh                  Empyrean: rescan bags now
 /aby compact                  compact view (staggers / armour)
@@ -65,7 +65,7 @@ Drag either window by any empty part of it. Resize the main window from its bott
 | `abyhub.lua` | main addon: windows, commands, Abyssea tabs, lights, stagger popups |
 | `abyempy.lua` | Empyrean tab |
 | `abytheme.lua` | drawing / colours (edit the `HUD` table to recolour) |
-| `abyicons.lua` | item icons for the Empyrean weapons, read from the game's own item data |
+| `abyicons.lua` | item icons for Empyrean armour and weapons, read from the game's own item data (brightened and sharpened) |
 | `abyatma.lua` | atma names, sources and effects |
 | `empydata.lua` | Empyrean armour stats and NM drop data |
 | `empyweapons.lua` | Empyrean weapon trial paths |
