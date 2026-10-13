@@ -588,9 +588,10 @@ local function tier_tiles(p, x, y, w)
         dl:AddRectFilled({ tx, y }, { tx + tw, y + th }, col(HUD.inset), 6)
         dl:AddRect({ tx + 0.5, y + 0.5 }, { tx + tw - 0.5, y + th - 0.5 },
             mine and col(TIER_COL[t], 0.55) or col(HUD.card_line), 6, CORNERS_ALL, 1)
-        local alpha = (mine or next_up) and 1 or 0.45
+        local alpha = (mine or next_up) and 1 or 0.45      -- text
+        local ialpha = (mine or next_up) and 1 or 0.8      -- icon: faded a little, still easy to see
         local ix, iy = tx + 6, y + 6
-        local has = icons.draw(it.id, ix, iy, TILE_ICON, alpha, mine and TIER_COL[t] or nil)
+        local has = icons.draw(it.id, ix, iy, TILE_ICON, ialpha, mine and TIER_COL[t] or nil)
         local nx = has and (ix + TILE_ICON + 8) or (tx + 10)
         local nw = tx + tw - 8 - nx
         local ny = iy + (TILE_ICON - lh * 2 - 2) * 0.5
@@ -692,7 +693,7 @@ local function draw_set_card(i, jd, x, y, w, h, mine)
         local ot = owned_tier(p)
         local tt = math.max(ot, 0)
         local ix = px + (k - 1) * step
-        if not icons.draw(tier_item(p, tt).id, ix, py, GAL_ICON, ot >= 0 and 1 or 0.35, ot >= 0 and TIER_COL[ot] or nil) then
+        if not icons.draw(tier_item(p, tt).id, ix, py, GAL_ICON, ot >= 0 and 1 or 0.6, ot >= 0 and TIER_COL[ot] or nil) then
             DL():AddRectFilled({ ix, py }, { ix + GAL_ICON, py + GAL_ICON }, col(HUD.inset), 4)
             text(ix + (GAL_ICON - text_w(p.slot:sub(1, 1))) * 0.5, py + (GAL_ICON - lh) * 0.5, HUD.faint, p.slot:sub(1, 1))
         end
