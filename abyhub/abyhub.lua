@@ -1,6 +1,6 @@
 addon.name = 'abyhub'
 addon.author = 'Laudout'
-addon.version = '2.9.1'
+addon.version = '3.0.0'
 addon.desc = 'Abyssea + Empyrean toolkit: key items, staggers, atma, lights, Empyrean armour, NMs and weapons.'
 
 require('common')
@@ -1241,7 +1241,7 @@ end)
 local HELP = {
     '/aby                         show / hide the window',
     '/aby ki | stagger | atma | empyrean    open a tab',
-    '/aby armor | nms | weapons [stages|completed]    Empyrean views',
+    '/aby sets | armor | nms | weapons [stages|completed]    Empyrean views (sets = all armour sets, armor = your set)',
     '/aby job <JOB|auto>          Empyrean: show a job (auto = main job)',
     '/aby refresh                 Empyrean: rescan bags now',
     '/aby compact                 compact view (staggers / armour)',

@@ -12,8 +12,8 @@ local wdata = require('empyweapons')
 local icons = require('abyicons')
 -- Weapons view sizes: icons at the game's own 32px, text 20% larger than the other tabs.
 local WICON, WICON_HEAD, WTEXT = 32, 40, 1.2
--- Armour cards: the NQ piece's icon next to the slot name.
-local ARMOR_ICON = 32
+-- Armour tab icon sizes: set gallery, tier tiles, hover card (the "full" view).
+local GAL_ICON, TILE_ICON, TIP_ICON = 32, 40, 64
 
 local T = require('abytheme')
 local HUD, ui, CORNERS_ALL = T.HUD, T.ui, T.CORNERS_ALL
@@ -66,9 +66,10 @@ local state = {
     tier      = 0,          -- nms tab: 0 both, 1 seals, 2 +2 items
     wtab      = 2,          -- weapons tab: 2 stages, 3 completed
     wsel      = nil,        -- stages view: picked weapon (index); nil = auto
+    aset      = false,      -- armor tab: true = one set's pieces, false = all sets
 }
 
-local SAVED = { 'tab', 'job', 'compact', 'slot', 'tier', 'wtab', 'wsel' }
+local SAVED = { 'tab', 'job', 'compact', 'slot', 'tier', 'wtab', 'wsel', 'aset' }
 
 local function settings_file()
     return ('%s/abyhub_empyrean.lua'):format(addon.path)
@@ -345,8 +346,15 @@ local function measure_layout()
     end
     local vw = math.max(text_w('+100%'), text_w('BASE')) + 10
     local card = 24 + math.max(stat_w + 8 + vw * 3, text_w('-> +2') + 10 + up_w + 50 + text_w('00/00') + 8)
+    -- tier tiles (icon, name, status) three across
+    local tile = TILE_ICON + 20 + math.max(text_w('NEXT  10/10'), text_w('NOT OWNED'), 18 * text_w('a'))
+    card = math.max(card, 24 + tile * 3 + 16)
     L.armor_one = card
     L.armor_two = card * 2 + 10
+    -- set gallery card: job + set name + count over five icons
+    local set_w = 0
+    for _, j in ipairs(data.jobs) do set_w = math.max(set_w, text_w(j.set)) end
+    L.gal_card = math.max(24 + 5 * GAL_ICON + 4 * 8, 24 + text_w('WAR') + 10 + set_w + 12 + text_w('10/10'))
 
     -- Weapons: stages table + completed rows
     L.w_no, L.w_hold, L.w_obj, L.w_stat, L.w_wname, L.w_skill = text_w('TRIAL'), text_w('WEAPON'), 0, text_w('HAND IN'), 0, 0
@@ -466,33 +474,151 @@ local function upgrade_line(x, y, w, tier, up, reached)
     if bw > 20 then bar(bx, y + lh * 0.5 - 1.5, bw, 3, reached and 1 or (h / up.qty), done and HUD.owned or tc) end
 end
 
+local TIERS = { [0] = 'base', [1] = 'p1', [2] = 'p2' }
+local function tier_item(p, t) return p[TIERS[t]] end
+
+-- Upgrades done for one job's set (two per piece).
+local function progress_of(jd)
+    local done, total = 0, 0
+    for _, p in ipairs(jd.pieces) do
+        total = total + 2
+        local t = owned_tier(p)
+        if t >= 1 then done = done + 1 end
+        if t >= 2 then done = done + 1 end
+    end
+    return done, total
+end
+
+-- What tier t of piece p means for you: label + colour.
+local function tile_status(p, t)
+    local ot = owned_tier(p)
+    if t == ot then return 'OWNED', TIER_COL[t] end
+    if t < ot then return 'UPGRADED', HUD.faint end
+    if t == 0 then return 'NOT OWNED', HUD.faint end
+    local up = (t == 1) and p.up1 or p.up2
+    local h = math.min(have(up.id), up.qty)
+    if t == ot + 1 then return ('NEXT  %d/%d'):format(h, up.qty), h >= up.qty and HUD.owned or HUD.text end
+    return ('%d/%d'):format(h, up.qty), HUD.faint
+end
+
+local function mouse_in(x, y, w, h)
+    local ok, mx, my = pcall(imgui.GetMousePos)
+    mx, my = tonumber(mx), tonumber(my)
+    if not ok or not mx or not my then return false end
+    local hv = true
+    if type(imgui.IsWindowHovered) == 'function' then hv = imgui.IsWindowHovered() end
+    return hv and mx >= x and mx < x + w and my >= y and my < y + h
+end
+
+-- Lines of the item's in-game text (falls back to our stats when the client
+-- doesn't have it).
+local function desc_lines(it, info)
+    local lines = {}
+    if info and info.desc then
+        for l in (info.desc:gsub('\r', '') .. '\n'):gmatch('(.-)\n') do
+            if l ~= '' then lines[#lines + 1] = l end
+        end
+    end
+    if #lines == 0 then
+        for _, st in ipairs(it.stats) do
+            lines[#lines + 1] = (st[1] == 'DEF') and ('DEF:' .. st[2])
+                or (st[2] == 'Yes' and st[1] or (st[1] .. ' ' .. st[2]))
+        end
+    end
+    return lines
+end
+
+-- Hover card for one tier of a piece: big icon, name, slot / level / job, the
+-- item's own text, and where you stand with it.
+local function piece_tooltip(jd, p, t)
+    local it = tier_item(p, t)
+    local info = icons.info(it.id)
+    if type(imgui.BeginTooltip) ~= 'function' then imgui.SetTooltip(it.name); return end
+    imgui.BeginTooltip()
+    local x, y = imgui.GetCursorScreenPos()
+    local lh = line_h()
+    local NS = 1.15
+    local name = (info and info.name) or it.name
+    local sub = ('%s  \194\183  Lv.%d %s'):format(p.slot, it.lv, jd.job)
+    local st, sc = tile_status(p, t)
+    local up = (t == 1 and p.up1) or (t == 2 and p.up2) or nil
+    local need = up and ('Upgrade: %dx %s'):format(up.qty, up.item) or nil
+    local lines = desc_lines(it, info)
+
+    local drawn = icons.draw(it.id, x, y, TIP_ICON, 1, TIER_COL[t])
+    local tx = drawn and (x + TIP_ICON + 12) or x
+    local w = math.max(text_w(name) * NS, text_w(sub), text_w(st)) + (tx - x)
+    for _, l in ipairs(lines) do w = math.max(w, text_w(l)) end
+    if need then w = math.max(w, text_w(need)) end
+    w = math.max(w, 220)
+
+    text(tx, y + 2, TIER_COL[t], name, NS)
+    text(tx, y + 6 + lh * NS, HUD.muted, sub)
+    text(tx, y + 10 + lh * NS + lh, sc, st)
+    local py = y + math.max(drawn and TIP_ICON or 0, 10 + lh * NS + lh * 2) + 8
+    DL():AddRectFilled({ x, py }, { x + w, py + 1 }, col(HUD.row_line))
+    py = py + 7
+    for _, l in ipairs(lines) do
+        text(x, py, HUD.text, l)
+        py = py + lh + 2
+    end
+    if need then
+        py = py + 4
+        text(x, py, HUD.muted, need)
+        py = py + lh
+    end
+    imgui.Dummy({ w, py - y })
+    imgui.EndTooltip()
+end
+
+-- Three tiles (NQ | +1 | +2) for one piece. Returns the tier being hovered, if any.
+local function tier_tiles(p, x, y, w)
+    local dl = DL()
+    local lh = line_h()
+    local ot = owned_tier(p)
+    local gap = 8
+    local tw = (w - gap * 2) / 3
+    local th = TILE_ICON + 12
+    local hovered = nil
+    for t = 0, 2 do
+        local tx = x + t * (tw + gap)
+        local it = tier_item(p, t)
+        local st, sc = tile_status(p, t)
+        local mine, next_up = (t == ot), (t == ot + 1)
+        dl:AddRectFilled({ tx, y }, { tx + tw, y + th }, col(HUD.inset), 6)
+        dl:AddRect({ tx + 0.5, y + 0.5 }, { tx + tw - 0.5, y + th - 0.5 },
+            mine and col(TIER_COL[t], 0.55) or col(HUD.card_line), 6, CORNERS_ALL, 1)
+        local alpha = (mine or next_up) and 1 or 0.45
+        local ix, iy = tx + 6, y + 6
+        local has = icons.draw(it.id, ix, iy, TILE_ICON, alpha, mine and TIER_COL[t] or nil)
+        local nx = has and (ix + TILE_ICON + 8) or (tx + 10)
+        local nw = tx + tw - 8 - nx
+        local ny = iy + (TILE_ICON - lh * 2 - 2) * 0.5
+        text(nx, ny, rgba(TIER_COL[t], alpha), fit(it.name, nw))
+        text(nx, ny + lh + 2, sc, fit(st, nw))
+        if mouse_in(tx, y, tw, th) then
+            hovered = t
+            dl:AddRectFilled({ tx + 1, y + 1 }, { tx + tw - 1, y + th - 1 }, col(HUD.text, 0.04), 6)
+        end
+    end
+    return hovered, th
+end
+
 -- One slot card; returns content height.
-local function draw_piece(p, x, y, w, h)
+local function draw_piece(jd, p, x, y, w, h)
     local dl = DL()
     local lh = line_h()
     local ot = owned_tier(p)
     card_bg(x, y, w, h, ot >= 0 and TIER_COL[ot] or nil, ot == 2 and 0.9 or 0.6)
     local clipped = T.push_clip(x, y, x + w, y + h)
 
-    local px, py, pw = x + 12, y + 9, w - 24
-    local name = ('%s  Lv.%d'):format(p.base.name, p.base.lv)
-    local tag = ot >= 0 and TIER_NAME[ot] or 'NOT OWNED'
-    local tag_c = ot >= 0 and TIER_COL[ot] or HUD.faint
-    -- NQ piece's icon (from the game's own item data) in front of the slot name
-    local row, tx = lh, px
-    local isz = ARMOR_ICON
-    if icons.get(p.base.id) then
-        icons.draw(p.base.id, px, py, isz, 1, ot >= 0 and TIER_COL[ot] or nil)
-        local _, hv = hit('##aicon_' .. p.slot, px, py, isz, isz)
-        if hv then imgui.SetTooltip(icons.name(p.base.id) or p.base.name) end
-        row, tx = isz, px + isz + 10
-    end
-    local ty = py + (row - lh) * 0.5
-    local tw = pw - (tx - px)
-    card_title(tx, ty, tw, ot >= 0 and TIER_COL[ot] or HUD.muted, p.slot:upper(),
-        fit(name, tw - text_w(p.slot:upper()) - pill_w(tag) - 30))
-    pill(px + pw - pill_w(tag), ty, tag, tag_c, ot == 2 and (0.12 + pulse(2) * 0.08) or 0.12)
-    py = py + row + 8
+    local px, py, pw = x + 12, y + 10, w - 24
+    card_title(px, py, pw, ot >= 0 and TIER_COL[ot] or HUD.muted, p.slot:upper(), ('Lv.%d'):format(p.base.lv),
+        ot >= 0 and TIER_NAME[ot] or 'NOT OWNED', ot >= 0 and TIER_COL[ot] or HUD.faint)
+    py = py + lh + 8
+
+    local hovered, th = tier_tiles(p, px, py, pw)
+    py = py + th + 8
 
     if not state.compact then
         local vw = math.max(text_w('+100%'), text_w('BASE')) + 10
@@ -510,10 +636,7 @@ local function draw_piece(p, x, y, w, h)
             end
             local shown = fit(k, sx - px - 6)
             text(px, py, HUD.subtext, shown)
-            if shown ~= k then
-                local _, hv = hit(('##st_%s_%d'):format(p.slot, ri), px, py, sx - px - 6, lh)
-                if hv then imgui.SetTooltip(k) end
-            end
+            if shown ~= k and mouse_in(px, py, sx - px - 6, lh) then imgui.SetTooltip(k) end
             local prev = nil
             for i = 1, 3 do
                 local v = maps[i][k]
@@ -528,28 +651,120 @@ local function draw_piece(p, x, y, w, h)
             py = py + lh + 2
         end
         py = py + 6
+
+        upgrade_line(px, py, pw, 1, p.up1, ot >= 1)
+        py = py + lh + 4
+        upgrade_line(px, py, pw, 2, p.up2, ot >= 2)
+        py = py + lh + 4
     end
 
-    upgrade_line(px, py, pw, 1, p.up1, ot >= 1)
-    py = py + lh + 4
-    upgrade_line(px, py, pw, 2, p.up2, ot >= 2)
-    py = py + lh + 4
-
     T.pop_clip(clipped)
-    return (py - y) + 10
+    if hovered ~= nil then piece_tooltip(jd, p, hovered) end
+    return (py - y) + 6
 end
 
-local function render_armor()
+local function open_set(i)
+    state.job = (i ~= main_job()) and i or nil
+    state.aset = true
+    save_settings()
+end
+
+-- Gallery card for one job's set: job, set name, upgrades done, five icons
+-- (your best tier of each piece; NQ faded when you have none).
+local function draw_set_card(i, jd, x, y, w, h, mine)
+    local lh = line_h()
+    local d, t = progress_of(jd)
+    local done = d == t
+    local clicked, hov = hit('##aset_' .. i, x, y, w, h)
+    card_bg(x, y, w, h, done and HUD.gold or (mine and HUD.accent or nil), hov and 1 or 0.6)
+    if hov then DL():AddRectFilled({ x + 1, y + 1 }, { x + w - 1, y + h - 1 }, col(HUD.text, 0.035), 6) end
+    local px, py = x + 12, y + 10
+    text(px, py, mine and HUD.accent or HUD.accent2, jd.job)
+    local sx = px + text_w('WAR') + 10
+    local cnt = ('%d/%d'):format(d, t)
+    text(sx, py, HUD.text, fit(jd.set, x + w - 12 - text_w(cnt) - 10 - sx))
+    rtext(x + w - 12, py, done and HUD.gold or (d > 0 and HUD.text or HUD.faint), cnt)
+    py = py + lh + 8
+    local n = #jd.pieces
+    local step = (n > 1) and math.min(GAL_ICON + 8, (w - 24 - GAL_ICON) / (n - 1)) or 0
+    local hover = nil
+    for k, p in ipairs(jd.pieces) do
+        local ot = owned_tier(p)
+        local tt = math.max(ot, 0)
+        local ix = px + (k - 1) * step
+        if not icons.draw(tier_item(p, tt).id, ix, py, GAL_ICON, ot >= 0 and 1 or 0.35, ot >= 0 and TIER_COL[ot] or nil) then
+            DL():AddRectFilled({ ix, py }, { ix + GAL_ICON, py + GAL_ICON }, col(HUD.inset), 4)
+            text(ix + (GAL_ICON - text_w(p.slot:sub(1, 1))) * 0.5, py + (GAL_ICON - lh) * 0.5, HUD.faint, p.slot:sub(1, 1))
+        end
+        if mouse_in(ix, py, GAL_ICON, GAL_ICON) then hover = { p, tt } end
+    end
+    py = py + GAL_ICON + 10
+    bar(px, py, w - 24, 3, d / math.max(1, t), done and HUD.gold or HUD.accent)
+    if hover then piece_tooltip(jd, hover[1], hover[2]) end
+    if clicked then open_set(i) end
+end
+
+local function render_gallery()
+    local lh = line_h()
+    local x, y = imgui.GetCursorScreenPos()
+    local w = avail_w()
+
+    -- Summary strip: every set together
+    local d, t = 0, 0
+    for _, jd in ipairs(data.jobs) do local a, b = progress_of(jd); d, t = d + a, t + b end
+    local sh = lh + 16
+    card_bg(x, y, w, sh, HUD.gold, 0.6)
+    local tx = x + 10
+    text(tx, y + 8, HUD.muted, 'EMPYREAN SETS')
+    tx = tx + text_w('EMPYREAN SETS') + 10
+    local cnt = ('%d / %d upgrades'):format(d, t)
+    text(tx, y + 8, HUD.text, cnt)
+    tx = tx + text_w(cnt) + 12
+    local hint = 'Click a set for its pieces'
+    local hx = x + w - 10 - text_w(hint)
+    text(hx, y + 8, HUD.faint, hint)
+    bar(tx, y + sh * 0.5 - 2, math.max(0, hx - tx - 14), 4, d / math.max(1, t), d == t and HUD.owned or HUD.gold)
+    advance(w, sh)
+
+    -- Grid of sets
+    local gap = 10
+    local cmin = (ui.layout and ui.layout.gal_card) or 240
+    local cols = math.max(1, math.floor((w + gap) / (cmin + gap)))
+    local cw = (w - gap * (cols - 1)) / cols
+    local ch = 10 + lh + 8 + GAL_ICON + 10 + 3 + 10
+    local mj = main_job()
+    for i, jd in ipairs(data.jobs) do
+        local c = (i - 1) % cols
+        if c == 0 then x, y = imgui.GetCursorScreenPos() end
+        draw_set_card(i, jd, x + c * (cw + gap), y, cw, ch, i == mj)
+        if c == cols - 1 or i == #data.jobs then
+            advance(w, ch)
+            imgui.Dummy({ 0, 2 })
+        end
+    end
+end
+
+local function render_set()
     local lh = line_h()
     local x, y = imgui.GetCursorScreenPos()
     local w = avail_w()
     local jd = job_def()
 
-    -- Summary strip
-    local d, t = set_progress()
+    -- Summary strip: back to all sets, this set's progress, compact
+    local d, t = progress_of(jd)
     local sh = lh + 16
     card_bg(x, y, w, sh, HUD.gold, 0.6)
-    local tx = x + 10
+    local back = '<  ALL SETS'
+    local bw, bh = text_w(back) + 20, lh + 8
+    local bx, by = x + 6, y + (sh - bh) * 0.5
+    local bc, bhov = hit('##aset_back', bx, by, bw, bh)
+    DL():AddRectFilled({ bx, by }, { bx + bw, by + bh }, bhov and col(HUD.sel_fill) or col({ 1, 1, 1, 0.035 }), 5)
+    DL():AddRect({ bx + 0.5, by + 0.5 }, { bx + bw - 0.5, by + bh - 0.5 }, col(HUD.card_line), 5, CORNERS_ALL, 1)
+    text(bx + 10, by + 4, bhov and HUD.text or HUD.accent2, back)
+    if bc then state.aset = false; save_settings() end
+    local tx = bx + bw + 12
+    text(tx, y + 8, HUD.accent2, jd.job)
+    tx = tx + text_w(jd.job) + 8
     text(tx, y + 8, HUD.muted, jd.set:upper() .. ' SET')
     tx = tx + text_w(jd.set:upper() .. ' SET') + 10
     local cnt = ('%d / %d upgrades'):format(d, t)
@@ -557,8 +772,7 @@ local function render_armor()
     tx = tx + text_w(cnt) + 12
     local cx = x + w - 10
     local chip_x = cx - T.toggle_w('Compact')
-    local bw = chip_x - tx - 14
-    bar(tx, y + sh * 0.5 - 2, bw, 4, d / math.max(1, t), d == t and HUD.owned or HUD.gold)
+    bar(tx, y + sh * 0.5 - 2, math.max(0, chip_x - tx - 14), 4, d / math.max(1, t), d == t and HUD.owned or HUD.gold)
     local cc = toggle_chip('##empy_compact2', 'Compact', state.compact, chip_x, y + (sh - (lh + 10)) * 0.5, HUD.accent)
     if cc then state.compact = not state.compact; save_settings() end
     advance(w, sh)
@@ -573,20 +787,19 @@ local function render_armor()
 
     -- Slot cards: two columns when wide.
     local gap = 10
-    -- two columns whenever there's reasonable room; long stat names shorten (hover shows them)
-    local cols = (w >= math.min(ui.layout.armor_two, 760)) and 2 or 1
+    local cols = (w >= ui.layout.armor_two) and 2 or 1
     local cw = (w - gap * (cols - 1)) / cols
     local pieces = jd.pieces
     local i = 1
     while i <= #pieces do
         x, y = imgui.GetCursorScreenPos()
-        local key = ('armor_%d_%d'):format(cols, i)
+        local key = ('armor_%d_%d_%s'):format(cols, i, state.compact and 'c' or 'f')
         local h = ui.h[key] or 160
         local max_h = 0
         for c = 0, cols - 1 do
             local p = pieces[i + c]
             if p then
-                max_h = math.max(max_h, draw_piece(p, x + c * (cw + gap), y, cw, h))
+                max_h = math.max(max_h, draw_piece(jd, p, x + c * (cw + gap), y, cw, h))
             end
         end
         ui.h[key] = max_h
@@ -594,6 +807,10 @@ local function render_armor()
         imgui.Dummy({ 0, 2 })
         i = i + cols
     end
+end
+
+local function render_armor()
+    if state.aset then render_set() else render_gallery() end
 end
 
 --------------------------------------------------------------------------------
@@ -1135,6 +1352,10 @@ function M.command(args)
     local function open(t) if t then state.tab = t end; save_settings(); return true end
 
     if cmd == 'armor' or cmd == 'armour' then
+        state.aset = true      -- straight to a set's pieces (the job shown on the job pill)
+        return open(1)
+    elseif cmd == 'sets' then
+        state.aset = false
         return open(1)
     elseif cmd == 'nms' then
         return open(2)

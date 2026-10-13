@@ -49,4 +49,21 @@ function M.name(id)
     return nil
 end
 
+-- The item's own text from the game client: name, description (the stat lines
+-- the in-game item window shows), level. nil when the client doesn't have it.
+function M.info(id)
+    local ok, r = pcall(function()
+        local item = AshitaCore:GetResourceManager():GetItemById(id)
+        if item == nil then return nil end
+        local desc = item.Description and item.Description[1] or nil
+        return {
+            name = item.Name and item.Name[1] or nil,
+            desc = (type(desc) == 'string' and desc ~= '') and desc or nil,
+            level = tonumber(item.Level),
+        }
+    end)
+    if ok then return r end
+    return nil
+end
+
 return M
