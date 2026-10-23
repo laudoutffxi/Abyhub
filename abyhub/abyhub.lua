@@ -99,6 +99,7 @@ local state = {
 
     show_all = { false },
     compact = { false },
+    search = { '' },         -- the header's search box
     target = 'No target',
     vana_hour = 0,
     vana_minute = 0,
@@ -1427,6 +1428,45 @@ local function zone_label()
     return nil
 end
 
+-- Search box in the header: magnifier, placeholder, and an x to clear it.
+local function search_box(x, y, w)
+    local lh = line_h()
+    local h = lh + 10
+    local cx, cy = imgui.GetCursorScreenPos()
+    imgui.SetCursorScreenPos({ x, y })
+    imgui.PushStyleColor(ImGuiCol_FrameBg, HUD.inset)
+    imgui.PushStyleColor(ImGuiCol_FrameBgHovered, HUD.inset)   -- same fill as the clear-button strip;
+    imgui.PushStyleColor(ImGuiCol_FrameBgActive, HUD.inset)    -- focus shows on the border instead
+    imgui.PushStyleVar(ImGuiStyleVar_FramePadding, { 28, 5 })
+    imgui.PushStyleVar(ImGuiStyleVar_FrameRounding, 6)
+    imgui.PushItemWidth(w - 24)
+    imgui.InputText('##aby_search', state.search, 64)
+    local active = imgui.IsItemActive()
+    imgui.PopItemWidth()
+    imgui.PopStyleVar(2)
+    imgui.PopStyleColor(3)
+    imgui.SetCursorScreenPos({ cx, cy })
+    local dl = DL()
+    local q = state.search[1] or ''
+    -- the input is a little narrower than the box, leaving room for the clear button
+    dl:AddRectFilled({ x + w - 26, y }, { x + w, y + h }, col(HUD.inset), 6)
+    dl:AddRect({ x + 0.5, y + 0.5 }, { x + w - 0.5, y + h - 0.5 }, col(HUD.edge, active and 0.8 or 0.25), 6, CORNERS_ALL, 1)
+    if active then T.chamfer_line(x - 1, y - 1, w + 2, h + 2, 7, col(HUD.edge, 0.12), 3) end
+    local my = y + h * 0.5
+    local mc = (active or q ~= '') and HUD.accent or HUD.muted
+    dl:AddCircle({ x + 13, my - 1 }, 4.5, col(mc), 12, 1.4)
+    dl:AddLine({ x + 16, my + 2 }, { x + 19.5, my + 5.5 }, col(mc), 1.6)
+    if q == '' and not active then text(x + 28, y + 5, HUD.faint, 'Search everything...') end
+    if q ~= '' then
+        local bx = x + w - 22
+        local clicked, hov = hit('##aby_search_clear', bx, y + 3, 18, h - 6)
+        local c = hov and HUD.text or HUD.muted
+        dl:AddLine({ bx + 5, my - 4 }, { bx + 13, my + 4 }, col(c), 1.5)
+        dl:AddLine({ bx + 13, my - 4 }, { bx + 5, my + 4 }, col(c), 1.5)
+        if clicked then state.search[1] = '' end
+    end
+end
+
 local function render_header()
     local lh = line_h()
     ki_follow_zone()
@@ -1456,6 +1496,10 @@ local function render_header()
             right = right - clock_w
             T.dot_pill(nil, right, y + (row_h - (lh + 8)) * 0.5, clock, dc, day, dc, true)
         end
+        -- search box between the title and the clock
+        local sx = x + title_w + 16
+        local sw = math.min(420, right - 14 - sx)
+        if sw >= 150 then search_box(sx, y + (row_h - (lh + 10)) * 0.5, sw) end
 
         -- row 2: whose data this is (name bright, so mains and alts are easy to tell
         -- apart), then jobs and zone in the muted info colour
@@ -1485,7 +1529,7 @@ local function render_header()
         local tabs_w = seg_width(tabs, false)
         local picked, _, th = seg_tabs('aby_tab', tabs, state.tab, x, ty, HUD.accent, false)
         if picked and picked ~= state.tab then state.tab = picked; save_settings() end
-        ui.header_need = math.max(title_w + 20 + (state.vana_ok and (T.dot_pill_w('00:00', 'Lightningday') + 10) or 0) + bs,
+        ui.header_need = math.max(title_w + 20 + 230 + (state.vana_ok and (T.dot_pill_w('00:00', 'Lightningday') + 10) or 0) + bs,
             info_w, tabs_w) + 12
         return ty + th - y + 4
     end, { line = true })
@@ -2324,6 +2368,255 @@ local function render_atma_tab()
 end
 
 --------------------------------------------------------------------------------
+-- Search results: everything that matches the header's search box, grouped.
+-- Clicking a result opens it (tab, zone / expansion, Empyrean job / weapon)
+-- and clears the search.
+--------------------------------------------------------------------------------
+
+local SR = { PER_GROUP = 12, more = {}, icons = require('abyicons') }
+
+function SR.words()
+    local q = (state.search[1] or ''):lower()
+    local words = {}
+    for w in q:gmatch('%S+') do words[#words + 1] = w end
+    return words, q:gsub('^%s+', ''):gsub('%s+$', '')
+end
+
+function SR.has_all(hay, words)
+    for _, w in ipairs(words) do
+        if not hay:find(w, 1, true) then return false end
+    end
+    return true
+end
+
+function SR.collect(words)
+    local has = SR.has_all
+    local page = has_required_page()
+    local groups = {}
+    local function add(title, rows) if #rows > 0 then groups[#groups + 1] = { title = title, rows = rows } end end
+    local function owned_tag(o)
+        if not page then return nil, nil end
+        return o and 'OWNED' or 'MISSING', o and HUD.owned or HUD.faint
+    end
+
+    -- key items + zone bosses
+    local kis, bosses = {}, {}
+    local boss_of = {}
+    for _, b in ipairs(BOSSES) do for _, k in ipairs(b.kis) do boss_of[k] = b end end
+    for _, area in ipairs(AREAS) do
+        local zone = area.name:gsub('^Abyssea%-', '')
+        for _, ki in ipairs(area.kis) do
+            local src = KI_SOURCE[ki[1]]
+            local b = boss_of[ki[1]]
+            local hay = ('%s %s %s %s key item pop'):format(ki[2], type(src) == 'string' and src or '', b and b.name or '', area.name):lower()
+            if has(hay, words) then
+                local parts = {}
+                if type(src) == 'string' then parts[#parts + 1] = 'from ' .. src end
+                if b then parts[#parts + 1] = 'pops ' .. b.name end
+                parts[#parts + 1] = zone
+                local st, sc = owned_tag(has_key_item(ki[1]))
+                local exp = area.exp
+                kis[#kis + 1] = { label = ki[2], sub = table.concat(parts, '  \194\183  '), status = st, status_col = sc,
+                    mark = HUD.accent2, go = function() state.tab = 1; ki_view.exp = exp end }
+            end
+        end
+    end
+    for _, b in ipairs(BOSSES) do
+        local hay = (b.name .. ' ' .. b.area .. ' boss nm'):lower()
+        if has(hay, words) then
+            local o = boss_owned(b)
+            local exp = 'vision'
+            for _, a in ipairs(AREAS) do if a.name == b.area then exp = a.exp end end
+            bosses[#bosses + 1] = { label = b.name, sub = b.area .. ('  \194\183  %d/%d pop key items'):format(o, #b.kis),
+                status = page and (o == #b.kis and 'READY' or nil) or nil, status_col = HUD.owned, mark = HUD.gold,
+                go = function() state.tab = 1; ki_view.exp = exp end }
+        end
+    end
+    add('KEY ITEMS', kis)
+    add('ZONE BOSSES', bosses)
+
+    -- staggers
+    local stag = {}
+    local function to_staggers() state.tab = 2; state.show_all[1] = true end
+    for _, r in ipairs(RED) do
+        if has(('%s %s %s red stagger elemental ws'):format(r[2], r[1], r[4]):lower(), words) then
+            stag[#stag + 1] = { label = r[2], sub = ('Red  \194\183  %s  \194\183  %s'):format(r[1], ELEMENT_LABEL[r[4]] or r[4]),
+                mark = (ELEMENT_MARKERS[r[4]] or {}).color or HUD.red, go = to_staggers }
+        end
+    end
+    for _, b in ipairs(BLUE) do
+        if has(('%s %s %s blue stagger physical ws'):format(b[3], b[2], b[1]):lower(), words) then
+            local now = state.vana_ok and blue_window() == b[1]
+            stag[#stag + 1] = { label = b[3], sub = ('Blue  \194\183  %s  \194\183  %s window'):format(b[2], b[1]),
+                status = now and 'NOW' or nil, status_col = HUD.blue, mark = HUD.blue, go = to_staggers }
+        end
+    end
+    for _, yd in ipairs(YELLOW) do
+        local hay = ('%s %s %s yellow stagger magic spell'):format(yd[1], yd[2], yd[3]):lower()
+        if has(hay, words) then
+            local spell = nil
+            for sp in yd[3]:gmatch('[^,]+') do
+                sp = sp:gsub('^%s+', '')
+                if not spell and has(sp:lower(), words) then spell = sp end
+            end
+            local today = state.vana_ok and yd[1] == current_day()
+            stag[#stag + 1] = { label = spell or yd[1], sub = ('Yellow  \194\183  %s  \194\183  %s magic'):format(yd[1], yd[2]),
+                status = today and 'TODAY' or nil, status_col = HUD.yellow,
+                mark = ELEMENT_COLOR[yd[2]] or HUD.yellow, go = to_staggers }
+        end
+    end
+    add('STAGGERS', stag)
+
+    -- atma
+    local atma = {}
+    for _, a in ipairs(ATMA) do
+        local fx = ATMA_FX[a[1]] or {}
+        local zone = ZONE_NAME[a[4]] or 'Other'
+        local base = ('atma of %s %s %s'):format(a[2], type(a[3]) == 'string' and a[3] or (fx.src or ''), zone):lower()
+        local via = nil
+        if not has(base, words) then
+            for _, l in ipairs(fx) do
+                if has(base .. ' ' .. l:lower(), words) then via = l; break end
+            end
+        end
+        if has(base, words) or via then
+            local sub = (type(a[3]) == 'string' and ('from ' .. a[3] .. '  \194\183  ') or '') .. zone
+            if via then sub = via .. '  \194\183  ' .. zone end
+            local st, sc = owned_tag(has_key_item(a[1]))
+            local g, z = ZONE_EXPANSION[a[4]], a[4]
+            atma[#atma + 1] = { label = 'Atma of ' .. a[2], sub = sub, status = st, status_col = sc, mark = HUD.purple,
+                go = function()
+                    state.tab = 3
+                    ui.atma_filter = 'all'
+                    if g then ui.atma_group = g; ui.atma_zone[g] = z else ui.atma_group = 'other' end
+                end }
+        end
+    end
+    add('ATMA', atma)
+
+    -- abyssites
+    local sites = {}
+    for _, grp in ipairs(ABYSSITES) do
+        local fx = table.concat(ABYSSITE_FX[grp[1]] or {}, ' ')
+        for _, gem in ipairs(grp[2]) do
+            local name = gem_name(gem[2], grp[1])
+            if has((name .. ' abyssite ' .. grp[1] .. ' ' .. fx):lower(), words) then
+                local st, sc = owned_tag(has_key_item(gem[1]))
+                sites[#sites + 1] = { label = name, sub = (ABYSSITE_FX[grp[1]] or {})[1], status = st, status_col = sc,
+                    mark = GEM_COLOR[gem[2]] or HUD.text,
+                    go = function() state.tab = 3; ui.atma_group = 'sites' end }
+            end
+        end
+    end
+    add('ABYSSITES', sites)
+
+    -- Empyrean (abyempy.lua)
+    local ok, eg = pcall(empy.search, words)
+    if ok and eg then
+        for _, g in ipairs(eg) do
+            for _, r in ipairs(g.rows) do
+                local go = r.go
+                r.go = function() go(); state.tab = 4 end
+            end
+            add(g.title, g.rows)
+        end
+    end
+    return groups
+end
+
+function SR.render()
+    local lh = line_h()
+    local words, q = SR.words()
+    local x, y = imgui.GetCursorScreenPos()
+    local w = avail_w()
+    if #q < 2 then
+        card_bg(x, y, w, lh + 22, nil)
+        text(x + 16, y + 11, HUD.muted, 'Keep typing - at least 2 letters.')
+        advance(w, lh + 22)
+        return
+    end
+    local groups = SR.collect(words)
+    local total = 0
+    for _, g in ipairs(groups) do total = total + #g.rows end
+
+    -- summary line
+    text(x + 2, y, HUD.muted, ('%d result%s for '):format(total, total == 1 and '' or 's'))
+    text(x + 2 + text_w(('%d result%s for '):format(total, total == 1 and '' or 's')), y, HUD.text, '"' .. q .. '"')
+    rtext(x + w - 2, y, HUD.faint, 'click a result to open it')
+    advance(w, lh + 2)
+    if total == 0 then
+        x, y = imgui.GetCursorScreenPos()
+        card_bg(x, y, w, lh * 2 + 26, nil)
+        text(x + 16, y + 11, HUD.text, 'Nothing found.')
+        text(x + 16, y + 15 + lh, HUD.muted, 'Try a key item, NM, atma, abyssite, weapon skill, spell, set, seal or weapon name.')
+        advance(w, lh * 2 + 26)
+        return
+    end
+
+    local rh = math.max(lh + 12, 28)
+    local picked = nil
+    for gi, g in ipairs(groups) do
+        local open = SR.more[g.title]
+        local n = open and #g.rows or math.min(#g.rows, SR.PER_GROUP)
+        local extra = #g.rows - n
+        local hh = lh + 14
+        local h = hh + n * rh + (extra > 0 and (lh + 12) or 0) + 8
+        x, y = imgui.GetCursorScreenPos()
+        card_bg(x, y, w, h, HUD.accent, 0.4)
+        local dl = DL()
+        text(x + 14, y + 9, HUD.accent, g.title)
+        rtext(x + w - 14, y + 9, HUD.faint, tostring(#g.rows))
+        dl:AddRectFilled({ x + 10, y + hh }, { x + w - 10, y + hh + 1 }, col(HUD.edge, 0.16))
+        local ry = y + hh + 2
+        for ri = 1, n do
+            local r = g.rows[ri]
+            local clicked, hov = hit(('##sr_%d_%d'):format(gi, ri), x + 6, ry, w - 12, rh)
+            if hov then
+                dl:AddRectFilled({ x + 6, ry }, { x + w - 6, ry + rh }, col(HUD.sel_fill), 5)
+                T.chamfer_line(x + 6.5, ry + 0.5, w - 13, rh - 1, 5, col(HUD.accent, 0.8), 1.2)
+            end
+            local cy = ry + rh * 0.5
+            local tx = x + 34
+            if not (r.icon and SR.icons.draw(r.icon, x + 12, cy - 10, 20, 1)) then
+                diamond(x + 22, cy, 4.5, r.mark or HUD.accent2, true, 0.4)
+                tx = x + 34
+            else
+                tx = x + 40
+            end
+            local right = x + w - 16
+            local sw = 0
+            if r.status then
+                pill(right - pill_w(r.status), cy - lh * 0.5, r.status, r.status_col or HUD.muted, 0.08)
+                sw = pill_w(r.status) + 12
+            end
+            local lw = math.min(text_w(r.label), (right - sw - tx) * 0.55)
+            local label = fit(r.label, lw + 1)
+            text(tx, cy - lh * 0.5, hov and HUD.text or HUD.subtext, label)
+            if r.sub then
+                local sx = tx + text_w(label) + 14
+                text(sx, cy - lh * 0.5, HUD.faint, fit(r.sub, right - sw - sx))
+            end
+            if clicked then picked = r end
+            ry = ry + rh
+        end
+        if extra > 0 then
+            local label = ('+ %d more'):format(extra)
+            local clicked, hov = hit(('##sr_more_%d'):format(gi), x + 14, ry + 4, text_w(label) + 10, lh + 4)
+            text(x + 14, ry + 6, hov and HUD.text or HUD.accent2, label)
+            if clicked then SR.more[g.title] = true end
+        end
+        advance(w, h)
+        imgui.Dummy({ 0, 2 })
+    end
+    if picked then
+        picked.go()
+        state.search[1] = ''
+        SR.more = {}
+        save_settings()
+    end
+end
+
+--------------------------------------------------------------------------------
 -- Stagger alert overlay (its own window, centred on screen, click-through)
 --------------------------------------------------------------------------------
 
@@ -2552,7 +2845,9 @@ ashita.events.register('d3d_present', 'abyhub_present_cb', function()
         T.draw_window_frame()
         T.begin_content(cw)
         render_header()
-        if state.tab == 1 then
+        if (state.search[1] or ''):find('%S') then
+            SR.render()
+        elseif state.tab == 1 then
             render_key_items()
         elseif state.tab == 3 then
             render_atma_tab()

@@ -10,6 +10,10 @@ An Abyssea + Empyrean toolkit addon for **Ashita v4** (Final Fantasy XI), in a S
 
 To load it automatically, add `/addon load abyhub` to your Ashita startup script. Nothing else is needed.
 
+## Search
+
+The search box at the top of the window searches everything at once: key items (and the NMs that drop them), zone bosses, red / blue / yellow staggers (weapon skills, weapons, elements, spells), atma (names, NMs, effects), abyssites, Empyrean sets and pieces, seals and +2 items (and the NMs that drop them), and Empyrean weapons (and their trial targets / items). Type two or more letters; several words must all match. Results are grouped; click one to jump straight to it. The x clears the search.
+
 ## Tabs
 
 - **KEY ITEMS**: Abyssea pop key items per zone and boss, for Vision, Scars and Heroes. It follows you into the zone you're in. Shows READY when a boss can be popped. Hover a key item to see which NM drops it.
@@ -20,9 +24,9 @@ To load it automatically, add `/addon load abyhub` to your Ashita startup script
   - Hover an atma to see its effects and where it comes from.
   - Hover an abyssite to see what it does.
 - **EMPYREAN**. The job pill on the right follows your main job; click it to pick any job.
-  - **ARMOR**: a search box and a compact list of all 20 Empyrean sets on the left (item icon, set name, job, upgrades done; a blue dot marks your main job). Click a set to see it on the right: its pieces as NQ / +1 / +2 tiles, set bonus, and (with compact off) the stat comparison and seal / +2 material counts from your bags. Hover a picture for the item's full in-game text.
+  - **ARMOR**: a compact list of all 20 Empyrean sets on the left (item icon, set name, job, upgrades done; a blue dot marks your main job). Click a set to see it on the right: its pieces as NQ / +1 / +2 tiles, set bonus, and (with compact off) the stat comparison and seal / +2 material counts from your bags. Hover a picture for the item's full in-game text.
   - **NMS**: the Abyssea NMs that drop each seal or +2 item, with drop rates and estimated kills.
-  - **WEAPONS**: a search box, ALL / MINE / ACTIVE / DONE filters and a list of the 14 Empyrean weapons with their Magian trial status (green light = you have the Empyrean, yellow = in progress). Click one for its full 10-trial path (CatsEyeXI) on the right; your current trial is detected from the weapon in your bags. The *Completed* entry at the top lists the Empyreans you've finished.
+  - **WEAPONS**: ALL / MINE (your job's weapons) / ACTIVE / DONE filters and a list of the 14 Empyrean weapons with their Magian trial status (green light = you have the Empyrean, yellow = in progress). Click one for its full 10-trial path (CatsEyeXI) on the right; your current trial is detected from the weapon in your bags. The *Completed* entry at the top lists the Empyreans you've finished.
   - The list and the detail side scroll separately.
 
 The **lights bar** (Abyssea lights and visitant time) is its own small window. It appears automatically when you enter an Abyssea zone and hides when you leave. `/abylights` turns that on or off.

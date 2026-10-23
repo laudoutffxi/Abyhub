@@ -1278,12 +1278,12 @@ local function render_weapons()
 end
 
 --------------------------------------------------------------------------------
--- List + detail views for ARMOR and WEAPONS: a search box and a compact list of
--- sets / weapons on the left, the selected one's details on the right. Both
+-- List + detail views for ARMOR and WEAPONS: a compact list of sets / weapons
+-- on the left, the selected one's details on the right. Both
 -- sides scroll on their own.
 --------------------------------------------------------------------------------
 
-local VT = { search = { '' }, wfilter = 'all', LIST_W = 300, LIST_MIN = 230, MIN_H = 460 }
+local VT = { wfilter = 'all', LIST_W = 300, LIST_MIN = 230, MIN_H = 460 }
 
 -- Height the two panels get: down to the bottom of the window (so the window
 -- itself doesn't need to scroll), but never less than MIN_H.
@@ -1300,36 +1300,6 @@ end
 function VT.glow_edge(x, y, w, h, c)
     T.chamfer_line(x - 1, y - 1, w + 2, h + 2, 6, col(c, 0.16), 3)
     T.chamfer_line(x + 0.5, y + 0.5, w - 1, h - 1, 5, col(c, 0.85), 1.2)
-end
-
-function VT.matches(r)
-    local q = (VT.search[1] or ''):lower():gsub('^%s+', ''):gsub('%s+$', '')
-    return q == '' or r.header or (r.search or r.label:lower()):find(q, 1, true) ~= nil
-end
-
--- Search box with a magnifier and a placeholder.
-function VT.search_box(x, y, w)
-    local lh = line_h()
-    local h = lh + 10
-    imgui.SetCursorScreenPos({ x, y })
-    imgui.PushStyleColor(ImGuiCol_FrameBg, HUD.inset)
-    imgui.PushStyleColor(ImGuiCol_FrameBgHovered, HUD.frame)
-    imgui.PushStyleColor(ImGuiCol_FrameBgActive, HUD.frame)
-    imgui.PushStyleVar(ImGuiStyleVar_FramePadding, { 26, 5 })
-    imgui.PushStyleVar(ImGuiStyleVar_FrameRounding, 5)
-    imgui.PushItemWidth(w)
-    imgui.InputText('##empy_search_' .. state.tab, VT.search, 48)
-    local active = imgui.IsItemActive()
-    imgui.PopItemWidth()
-    imgui.PopStyleVar(2)
-    imgui.PopStyleColor(3)
-    local dl = DL()
-    dl:AddRect({ x + 0.5, y + 0.5 }, { x + w - 0.5, y + h - 0.5 }, col(HUD.edge, active and 0.75 or 0.22), 5, CORNERS_ALL, 1)
-    local cy = y + h * 0.5
-    dl:AddCircle({ x + 12, cy - 1 }, 4.5, col(active and HUD.accent or HUD.muted), 12, 1.4)
-    dl:AddLine({ x + 15, cy + 2 }, { x + 18.5, cy + 5.5 }, col(active and HUD.accent or HUD.muted), 1.6)
-    if (VT.search[1] or '') == '' and not active then text(x + 26, y + 5, HUD.faint, 'Search...') end
-    return h
 end
 
 -- Compact scrolling list. rows: { key, label, sub, icon, icon_dim, badge,
@@ -1351,7 +1321,7 @@ function VT.list(id, rows, sel, w, h)
         local dl = DL()
         local shown = 0
         for i, r in ipairs(rows) do
-            if VT.matches(r) then
+            do
                 local x, y = imgui.GetCursorScreenPos()
                 local visible = y + rh >= wy and y <= wy + h
                 if r.header then
@@ -1406,7 +1376,7 @@ function VT.list(id, rows, sel, w, h)
         end
         if shown == 0 then
             local x, y = imgui.GetCursorScreenPos()
-            text(x + 8, y + 6, HUD.faint, 'Nothing matches.')
+            text(x + 8, y + 6, HUD.faint, 'Nothing here with this filter.')
             imgui.Dummy({ iw, lh + 12 })
         end
         imgui.Dummy({ 0, 4 })
@@ -1441,7 +1411,7 @@ function VT.detail(id, w, h, fn)
     imgui.PopStyleColor(1)
 end
 
--- Two columns: list panel (search, optional filter row, list) and detail panel.
+-- Two columns: list panel (optional filter row, list) and detail panel.
 -- filters(x, y, w) draws the filter row and returns its height (optional).
 function VT.layout(kind, rows, sel, filters, detail_fn, need)
     local x, y = imgui.GetCursorScreenPos()
@@ -1453,11 +1423,13 @@ function VT.layout(kind, rows, sel, filters, detail_fn, need)
     local dl = DL()
     -- list panel
     T.card_bg(x, y, lw, h, nil)
-    local sy = y + 8
-    sy = sy + VT.search_box(x + 8, sy, lw - 16) + 6
-    if filters then sy = sy + filters(x + 8, sy, lw - 16) + 6 end
-    dl:AddRectFilled({ x + 8, sy }, { x + lw - 8, sy + 1 }, col(HUD.edge, 0.18))
-    sy = sy + 3
+    local sy = y + 4
+    if filters then
+        sy = sy + 4
+        sy = sy + filters(x + 8, sy, lw - 16) + 6
+        dl:AddRectFilled({ x + 8, sy }, { x + lw - 8, sy + 1 }, col(HUD.edge, 0.18))
+        sy = sy + 3
+    end
     imgui.SetCursorScreenPos({ x + 2, sy })
     local picked = VT.list('##vlist_' .. kind, rows, sel, lw - 4, y + h - 4 - sy)
     -- detail panel
@@ -1550,6 +1522,142 @@ function VT.weapons(here)
         state.wsel, state.wtab = picked, 2
         save_settings()
     end
+end
+
+--------------------------------------------------------------------------------
+-- Search (abyhub's search box): Empyrean sets, pieces, seals / +2 items and the
+-- NMs that drop them, weapons and their trials. words = lowercase words, all of
+-- which must appear. Returns groups { title, rows = { label, sub, status,
+-- status_col, icon, go } }; go() opens the matching view.
+--------------------------------------------------------------------------------
+
+local function has_all(hay, words)
+    for _, w in ipairs(words) do
+        if not hay:find(w, 1, true) then return false end
+    end
+    return true
+end
+
+function M.search(words)
+    local mj = main_job()
+    local order = {}                 -- shown job first, then the rest
+    order[1] = job_index()
+    for i = 1, #data.jobs do if i ~= order[1] then order[#order + 1] = i end end
+    local function pick_job(i)
+        state.job = (i ~= mj) and i or nil
+    end
+
+    -- armour sets / pieces
+    local sets = {}
+    for _, i in ipairs(order) do
+        local jd = data.jobs[i]
+        local head = (JOBS[i] .. ' ' .. jd.set .. ' set'):lower()
+        local hit_piece = nil
+        local all = head
+        for _, p in ipairs(jd.pieces) do
+            for t = 0, 2 do
+                local it = tier_item(p, t)
+                local nm = (it.name .. ' ' .. p.slot):lower()
+                all = all .. ' ' .. nm
+                if not hit_piece and has_all(head .. ' ' .. nm, words) and not has_all(head, words) then
+                    hit_piece = { p = p, t = t, it = it }
+                end
+            end
+        end
+        if has_all(all, words) then
+            local d, tt = progress_of(jd)
+            local row = { label = jd.set, sub = JOBS[i] .. '  set', status = ('%d/%d'):format(d, tt),
+                status_col = d == tt and HUD.gold or (d > 0 and HUD.text or HUD.faint),
+                icon = tier_item(jd.pieces[1], 0).id,
+                go = function() pick_job(i); state.tab = 1; state.aset = true; save_settings() end }
+            if hit_piece then
+                local ot = owned_tier(hit_piece.p)
+                row.label = hit_piece.it.name
+                row.sub = ('%s %s  \194\183  %s %s'):format(JOBS[i], jd.set, hit_piece.p.slot:upper(), TIER_NAME[hit_piece.t])
+                row.icon = hit_piece.it.id
+                row.status = ot >= hit_piece.t and 'OWNED' or 'NOT OWNED'
+                row.status_col = ot >= hit_piece.t and HUD.owned or HUD.faint
+            end
+            sets[#sets + 1] = row
+        end
+    end
+
+    -- seals / +2 items, also found by the NMs that drop them. One row per item:
+    -- several jobs share some +2 items, so their jobs are listed together.
+    local mats, by_id = {}, {}
+    for _, i in ipairs(order) do
+        local jd = data.jobs[i]
+        for si, p in ipairs(jd.pieces) do
+            for tier = 1, 2 do
+                local up = tier == 1 and p.up1 or p.up2
+                local base = (up.item .. ' ' .. JOBS[i] .. ' ' .. jd.set .. ' ' .. p.slot .. (tier == 1 and ' seal' or ' +2')):lower()
+                local via = nil
+                if not has_all(base, words) then
+                    for _, r in ipairs(data.drops[up.id] or {}) do
+                        local nh = (nm_name(r.nm) .. ' ' .. (nm_zone(r.nm) or '')):lower()
+                        if has_all(base .. ' ' .. nh, words) then via = r; break end
+                    end
+                end
+                if has_all(base, words) or via then
+                    local row = by_id[up.id]
+                    if not row then
+                        local h = math.min(have(up.id), up.qty)
+                        local reached = owned_tier(p) >= tier
+                        row = { label = up.item, icon = up.id, jobs = {}, slot = p.slot:upper(), tier = TIER_NAME[tier], via = via,
+                            status = reached and 'DONE' or ('%d/%d'):format(h, up.qty),
+                            status_col = (reached or h >= up.qty) and HUD.owned or HUD.muted,
+                            go = function()
+                                pick_job(i); state.tab = 2; state.slot = si; state.tier = tier; save_settings()
+                            end }
+                        by_id[up.id] = row
+                        mats[#mats + 1] = row
+                    end
+                    row.jobs[#row.jobs + 1] = JOBS[i]
+                    row.via = row.via or via
+                end
+            end
+        end
+    end
+    for _, row in ipairs(mats) do
+        local sub = ('%s %s  \194\183  %s'):format(row.slot, row.tier, table.concat(row.jobs, ', '))
+        if row.via then
+            sub = ('%s %s  \194\183  %s (%s) %.1f%%  \194\183  %s'):format(row.slot, row.tier, nm_name(row.via.nm),
+                nm_zone(row.via.nm) or '?', row.via.pct, table.concat(row.jobs, ', '))
+        end
+        row.sub, row.jobs, row.slot, row.tier, row.via = sub, nil, nil, nil, nil
+    end
+
+    -- weapons, also found by trial targets / items
+    local weps = {}
+    for i, w in ipairs(wdata.weapons) do
+        local head = (w.name .. ' ' .. w.skill .. ' ' .. table.concat(w.jobs, ' ') .. ' empyrean weapon'):lower()
+        local via = nil
+        if not has_all(head, words) then
+            for _, st in ipairs(w.steps) do
+                local o = st.obj
+                local line = ('%s %s'):format(st.label, o.kind == 'defeat' and ('defeat ' .. o.target) or ('trade ' .. tostring(o.item)))
+                if has_all(head .. ' ' .. line:lower(), words) then via = st; break end
+            end
+        end
+        if has_all(head, words) or via then
+            local st = wstate_of(w)
+            local tag, tc = status_of(w)
+            local sub = w.skill .. '  \194\183  ' .. table.concat(w.jobs, ' ')
+            if via then
+                local o = via.obj
+                sub = ('Trial %s: %s'):format(tostring(via.trial or '-'),
+                    o.kind == 'defeat' and ('Defeat %s x%d'):format(o.target, o.qty) or ('Trade %dx %s'):format(o.qty, o.item))
+            end
+            weps[#weps + 1] = { label = w.name, sub = sub, status = tag, status_col = tc, icon = empy_icon_id(w, st),
+                go = function() state.tab = 3; state.wsel = i; state.wtab = 2; save_settings() end }
+        end
+    end
+
+    local out = {}
+    if #sets > 0 then out[#out + 1] = { title = 'EMPYREAN ARMOR', rows = sets } end
+    if #mats > 0 then out[#out + 1] = { title = 'SEALS & +2 ITEMS', rows = mats } end
+    if #weps > 0 then out[#out + 1] = { title = 'EMPYREAN WEAPONS', rows = weps } end
+    return out
 end
 
 --------------------------------------------------------------------------------
