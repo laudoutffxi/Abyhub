@@ -307,7 +307,7 @@ ui.layout = nil
 
 
 -- Each tier gets its own colour everywhere it appears.
-local TIER_COL = { [0] = HUD.subtext, [1] = HUD.accent2, [2] = HUD.gold }
+local TIER_COL = { [0] = HUD.subtext, [1] = HUD.blue, [2] = HUD.gold }
 local TIER_NAME = { [0] = 'BASE', [1] = '+1', [2] = '+2' }
 
 local function measure_layout()
@@ -585,9 +585,13 @@ local function tier_tiles(p, x, y, w)
         local it = tier_item(p, t)
         local st, sc = tile_status(p, t)
         local mine, next_up = (t == ot), (t == ot + 1)
-        dl:AddRectFilled({ tx, y }, { tx + tw, y + th }, col(HUD.inset), 6)
+        -- item-frame look: dark plate washed with the tier's colour from the top
+        local tc = TIER_COL[t]
+        dl:AddRectFilled({ tx, y }, { tx + tw, y + th }, col(HUD.inset), 3)
+        dl:AddRectFilledMultiColor({ tx, y }, { tx + tw, y + th },
+            col(tc, mine and 0.20 or 0.09), col(tc, mine and 0.20 or 0.09), col(tc, 0), col(tc, 0))
         dl:AddRect({ tx + 0.5, y + 0.5 }, { tx + tw - 0.5, y + th - 0.5 },
-            mine and col(TIER_COL[t], 0.55) or col(HUD.card_line), 6, CORNERS_ALL, 1)
+            col(tc, mine and 0.70 or 0.25), 3, CORNERS_ALL, 1)
         local alpha = (mine or next_up) and 1 or 0.45      -- text
         local ialpha = (mine or next_up) and 1 or 0.8      -- icon: faded a little, still easy to see
         local ix, iy = tx + 6, y + 6
