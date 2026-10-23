@@ -1,6 +1,6 @@
 # abyhub
 
-An Abyssea + Empyrean toolkit addon for **Ashita v4** (Final Fantasy XI), styled after YunaGearOpt (flat navy, periwinkle accent, Segoe UI).
+An Abyssea + Empyrean toolkit addon for **Ashita v4** (Final Fantasy XI), styled after VanaCore (flat navy, periwinkle accent, Segoe UI).
 
 ## Install
 
