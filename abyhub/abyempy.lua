@@ -1484,7 +1484,7 @@ function VT.weapons(here)
         local st = wstate_of(w)
         local got, active = st.idx > #w.steps, st.idx > 0 and st.idx <= #w.steps
         local f = VT.wfilter
-        if f == 'all' or (f == 'mine' and mine[w]) or (f == 'active' and active) or (f == 'done' and got) then
+        if f == 'all' or (f == 'active' and active) or (f == 'done' and got) then
             local tag, tc = status_of(w)
             rows[#rows + 1] = { key = i, label = w.name, sub = w.skill, icon = empy_icon_id(w, st),
                 badge = tag, badge_col = tc, light = got and HUD.owned or (active and HUD.yellow or nil),
@@ -1493,7 +1493,7 @@ function VT.weapons(here)
     end
     local sel = (state.wtab == 3) and 'done' or weapon_index(selected_weapon())
     local function filters(x, y, w)
-        local items = { { 'all', 'ALL' }, { 'mine', 'MINE' }, { 'active', 'ACTIVE' }, { 'done', 'DONE' } }
+        local items = { { 'all', 'ALL' }, { 'active', 'ACTIVE' }, { 'done', 'DONE' } }
         local p, _, th = seg_tabs('vwf', items, VT.wfilter, x, y, HUD.accent, true, { width = w })
         if p then VT.wfilter = p end
         return th

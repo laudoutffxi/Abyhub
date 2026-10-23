@@ -26,7 +26,7 @@ The search box at the top of the window searches everything at once: key items (
 - **EMPYREAN**. The job pill on the right follows your main job; click it to pick any job.
   - **ARMOR**: a compact list of all 20 Empyrean sets on the left (item icon, set name, job, upgrades done; a blue dot marks your main job). Click a set to see it on the right: its pieces as NQ / +1 / +2 tiles, set bonus, and (with compact off) the stat comparison and seal / +2 material counts from your bags. Hover a picture for the item's full in-game text.
   - **NMS**: the Abyssea NMs that drop each seal or +2 item, with drop rates and estimated kills.
-  - **WEAPONS**: ALL / MINE (your job's weapons) / ACTIVE / DONE filters and a list of the 14 Empyrean weapons with their Magian trial status (green light = you have the Empyrean, yellow = in progress). Click one for its full 10-trial path (CatsEyeXI) on the right; your current trial is detected from the weapon in your bags. The *Completed* entry at the top lists the Empyreans you've finished.
+  - **WEAPONS**: ALL / ACTIVE / DONE filters and a list of the 14 Empyrean weapons with their Magian trial status (green light = you have the Empyrean, yellow = in progress). Click one for its full 10-trial path (CatsEyeXI) on the right; your current trial is detected from the weapon in your bags. The *Completed* entry at the top lists the Empyreans you've finished.
   - The list and the detail side scroll separately.
 
 The **lights bar** (Abyssea lights and visitant time) is its own small window. It appears automatically when you enter an Abyssea zone and hides when you leave. `/abylights` turns that on or off.
