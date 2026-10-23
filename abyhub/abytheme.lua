@@ -1,31 +1,31 @@
--- abyhub theme: Shadow Codex edition.
--- Midnight-blue panels, arcane electric-blue edges, restrained violet accents,
--- layered borders and soft neon glows. Shared by abyhub.lua and abyempy.lua.
+-- abyhub theme: shared drawing helpers. Flat navy panels, rounded corners, a
+-- periwinkle accent and thin borders (the YunaGearOpt / VanaCore look).
+-- Used by abyhub.lua and abyempy.lua.
 local imgui = require('imgui')
 
 -- Base palette (YunaGearOpt).
 local C = {
-    bg       = { 0.012, 0.022, 0.046, 1.00 }, -- ink-dark navy
-    side     = { 0.018, 0.038, 0.072, 1.00 }, -- deep blue side panels
-    card     = { 0.028, 0.060, 0.108, 1.00 }, -- raised codex cards
-    frame    = { 0.040, 0.092, 0.154, 1.00 },
-    frame_hi = { 0.045, 0.170, 0.265, 1.00 }, -- energized selection
-    border   = { 0.080, 0.650, 1.000, 0.22 }, -- arcane cyan edge
-    line     = { 0.180, 0.570, 0.900, 0.14 },
-    accent   = { 0.080, 0.690, 1.000, 1.00 }, -- electric blue
-    text     = { 0.900, 0.955, 1.000, 1.00 },
-    muted    = { 0.390, 0.540, 0.675, 1.00 },
+    bg       = { 0.086, 0.098, 0.145, 1.00 },
+    side     = { 0.067, 0.078, 0.118, 1.00 },
+    card     = { 0.125, 0.145, 0.222, 1.00 },
+    frame    = { 0.176, 0.196, 0.271, 1.00 },
+    frame_hi = { 0.220, 0.243, 0.333, 1.00 },
+    border   = { 0.560, 0.620, 1.000, 0.12 },
+    line     = { 0.700, 0.750, 1.000, 0.08 },
+    accent   = { 0.490, 0.557, 1.000, 1.00 },
+    text     = { 0.910, 0.922, 0.957, 1.00 },
+    muted    = { 0.545, 0.576, 0.667, 1.00 },
 }
 
 -- Names the rest of the addon uses.
 local HUD = {
     accent      = C.accent,                      -- periwinkle: links, headings, selection
-    accent2     = { 0.42, 0.78, 1.00, 1.00 },
-    lavender    = { 0.62, 0.70, 1.00, 1.00 },
+    accent2     = { 0.66, 0.71, 1.00, 1.00 },
+    lavender    = { 0.78, 0.81, 1.00, 1.00 },
     text        = C.text,
-    subtext     = { 0.62, 0.76, 0.89, 1.00 },
+    subtext     = { 0.72, 0.75, 0.84, 1.00 },
     muted       = C.muted,
-    faint       = { 0.22, 0.36, 0.49, 1.00 },
+    faint       = { 0.36, 0.39, 0.48, 1.00 },
     owned       = { 0.45, 0.90, 0.60, 1.00 },
     warn        = { 1.00, 0.68, 0.30, 1.00 },
     bad         = { 1.00, 0.45, 0.45, 1.00 },
@@ -34,7 +34,7 @@ local HUD = {
     red         = { 1.00, 0.45, 0.45, 1.00 },
     blue        = { 0.45, 0.66, 1.00, 1.00 },
     purple      = { 0.72, 0.56, 1.00, 1.00 },
-    edge        = { 0.08, 0.65, 1.00, 1.00 },    -- border colour (drawn at low alpha)
+    edge        = { 0.56, 0.62, 1.00, 1.00 },    -- border colour (drawn at low alpha)
     edge_hi     = C.accent,
     glow        = C.accent,
     window_bg   = C.bg,
@@ -45,7 +45,7 @@ local HUD = {
     sel_fill    = C.frame_hi,
     card_line   = C.border,
     row_line    = C.line,
-    track       = { 0.32, 0.64, 0.90, 0.10 },
+    track       = { 1.00, 1.00, 1.00, 0.06 },
 }
 
 local ui = { h = {} }   -- shared layout state (panel heights, content width)
@@ -118,15 +118,9 @@ local function frame(x, y, w, h, opts)
     if opts.fill ~= false then chamfer_fill(x, y, w, h, r, col(opts.fill or HUD.card)) end
     local e = opts.edge or HUD.edge
     local a = opts.alpha or 0.85
-    -- Shadow Codex: a soft cyan halo under a crisp inner edge. Kept subtle so
-    -- small ImGui panels remain readable and the glow does not muddy the text.
-    if e == HUD.edge then
-        chamfer_line(x - 1, y - 1, w + 2, h + 2, r + 1, col(e, 0.045 * a), 2)
-        chamfer_line(x + 0.5, y + 0.5, w - 1, h - 1, r, col(e, 0.24 * a), 1)
-        chamfer_line(x + 1.5, y + 1.5, w - 3, h - 3, math.max(2, r - 1), col(e, 0.075 * a), 1)
-    else
-        chamfer_line(x + 0.5, y + 0.5, w - 1, h - 1, r, col(e, 0.48 * a), 1)
-    end
+    -- default border is a faint periwinkle hairline; a coloured edge reads a little stronger
+    local ba = (e == HUD.edge) and (0.14 * a / 0.85) or (0.45 * a)
+    chamfer_line(x + 0.5, y + 0.5, w - 1, h - 1, r, col(e, ba), 1)
 end
 
 -- Tag (status pill): small rounded tinted box.
@@ -156,10 +150,9 @@ local function card_bg(x, y, w, h, accent, strength)
     local s = strength or 1
     chamfer_fill(x, y, w, h, 6, col(HUD.card))
     if accent then
-        chamfer_line(x - 0.5, y - 0.5, w + 1, h + 1, 6, col(accent, 0.055 * s), 2)
-        chamfer_line(x + 0.5, y + 0.5, w - 1, h - 1, 6, col(accent, 0.32 + 0.25 * s), 1)
+        chamfer_line(x + 0.5, y + 0.5, w - 1, h - 1, 6, col(accent, 0.20 + 0.25 * s), 1)
     else
-        chamfer_line(x + 0.5, y + 0.5, w - 1, h - 1, 6, col(C.border, 0.85), 1)
+        chamfer_line(x + 0.5, y + 0.5, w - 1, h - 1, 6, col(C.border), 1)
     end
 end
 
