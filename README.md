@@ -1,6 +1,6 @@
 # abyhub
 
-An Abyssea + Empyrean toolkit addon for **Ashita v4** (Final Fantasy XI), styled after YunaGearOpt (flat navy, periwinkle accent, Segoe UI).
+An Abyssea + Empyrean toolkit addon for **Ashita v4** (Final Fantasy XI), in a Shadow Codex style (midnight-blue panels, electric-blue edges, Segoe UI).
 
 ## Install
 
@@ -20,11 +20,10 @@ To load it automatically, add `/addon load abyhub` to your Ashita startup script
   - Hover an atma to see its effects and where it comes from.
   - Hover an abyssite to see what it does.
 - **EMPYREAN**. The job pill on the right follows your main job; click it to pick any job.
-  - **ARMOR**: a gallery of all 20 Empyrean sets with item icons and your progress; click a set for its pieces as NQ / +1 / +2 tiles. Hover a picture for the item's full in-game text. With compact off, each piece also shows a stat comparison and seal / +2 material counts from your bags.
+  - **ARMOR**: a search box and a compact list of all 20 Empyrean sets on the left (item icon, set name, job, upgrades done; a blue dot marks your main job). Click a set to see it on the right: its pieces as NQ / +1 / +2 tiles, set bonus, and (with compact off) the stat comparison and seal / +2 material counts from your bags. Hover a picture for the item's full in-game text.
   - **NMS**: the Abyssea NMs that drop each seal or +2 item, with drop rates and estimated kills.
-  - **WEAPONS**: Empyrean weapon Magian trials (CatsEyeXI paths). Your current trial is detected automatically from the weapon in your bags.
-    - STAGES: the full 10-trial path. In the weapon list, a green light means you have the Empyrean and a yellow light means you're working on it.
-    - COMPLETED: the Empyreans you've finished.
+  - **WEAPONS**: a search box, ALL / MINE / ACTIVE / DONE filters and a list of the 14 Empyrean weapons with their Magian trial status (green light = you have the Empyrean, yellow = in progress). Click one for its full 10-trial path (CatsEyeXI) on the right; your current trial is detected from the weapon in your bags. The *Completed* entry at the top lists the Empyreans you've finished.
+  - The list and the detail side scroll separately.
 
 The **lights bar** (Abyssea lights and visitant time) is its own small window. It appears automatically when you enter an Abyssea zone and hides when you leave. `/abylights` turns that on or off.
 
@@ -37,7 +36,7 @@ Drag either window by any empty part of it. Resize the main window from its bott
 ```
 /aby                          show / hide the window
 /aby ki | stagger | atma | empyrean     open a tab
-/aby sets | armor | nms | weapons [stages|completed]     Empyrean views (sets = all armour sets, armor = your set)
+/aby armor | nms | weapons [completed]     Empyrean views
 /aby job <JOB|auto>           Empyrean: show a job (auto = follow main job)
 /aby refresh                  Empyrean: rescan bags now
 /aby compact                  compact view (staggers / armour)

@@ -755,15 +755,7 @@ local function render_set()
     local d, t = progress_of(jd)
     local sh = lh + 16
     card_bg(x, y, w, sh, HUD.gold, 0.6)
-    local back = '<  ALL SETS'
-    local bw, bh = text_w(back) + 20, lh + 8
-    local bx, by = x + 6, y + (sh - bh) * 0.5
-    local bc, bhov = hit('##aset_back', bx, by, bw, bh)
-    DL():AddRectFilled({ bx, by }, { bx + bw, by + bh }, bhov and col(HUD.sel_fill) or col({ 1, 1, 1, 0.035 }), 5)
-    DL():AddRect({ bx + 0.5, by + 0.5 }, { bx + bw - 0.5, by + bh - 0.5 }, col(HUD.card_line), 5, CORNERS_ALL, 1)
-    text(bx + 10, by + 4, bhov and HUD.text or HUD.accent2, back)
-    if bc then state.aset = false; save_settings() end
-    local tx = bx + bw + 12
+    local tx = x + 12
     text(tx, y + 8, HUD.accent2, jd.job)
     tx = tx + text_w(jd.job) + 8
     text(tx, y + 8, HUD.muted, jd.set:upper() .. ' SET')
@@ -1070,8 +1062,8 @@ local function weapon_picker()
     end)
 end
 
-local function render_stages(here_zone)
-    weapon_picker()
+local function render_stages(here_zone, no_picker)
+    if not no_picker then weapon_picker() end
     local w = selected_weapon()
     local st = wstate_of(w)
     local n = #w.steps
@@ -1286,13 +1278,289 @@ local function render_weapons()
 end
 
 --------------------------------------------------------------------------------
+-- List + detail views for ARMOR and WEAPONS: a search box and a compact list of
+-- sets / weapons on the left, the selected one's details on the right. Both
+-- sides scroll on their own.
+--------------------------------------------------------------------------------
+
+local VT = { search = { '' }, wfilter = 'all', LIST_W = 300, LIST_MIN = 230, MIN_H = 460 }
+
+-- Height the two panels get: down to the bottom of the window (so the window
+-- itself doesn't need to scroll), but never less than MIN_H.
+function VT.height()
+    local _, y = imgui.GetCursorScreenPos()
+    local _, wy = imgui.GetWindowPos()
+    local _, wh = imgui.GetWindowSize()
+    wy, wh = tonumber(wy), tonumber(wh)
+    if not (wy and wh) then return VT.MIN_H end
+    return math.max(VT.MIN_H, math.floor(wy + wh - 12 - y - 18))
+end
+
+-- Electric selection outline with a soft halo.
+function VT.glow_edge(x, y, w, h, c)
+    T.chamfer_line(x - 1, y - 1, w + 2, h + 2, 6, col(c, 0.16), 3)
+    T.chamfer_line(x + 0.5, y + 0.5, w - 1, h - 1, 5, col(c, 0.85), 1.2)
+end
+
+function VT.matches(r)
+    local q = (VT.search[1] or ''):lower():gsub('^%s+', ''):gsub('%s+$', '')
+    return q == '' or r.header or (r.search or r.label:lower()):find(q, 1, true) ~= nil
+end
+
+-- Search box with a magnifier and a placeholder.
+function VT.search_box(x, y, w)
+    local lh = line_h()
+    local h = lh + 10
+    imgui.SetCursorScreenPos({ x, y })
+    imgui.PushStyleColor(ImGuiCol_FrameBg, HUD.inset)
+    imgui.PushStyleColor(ImGuiCol_FrameBgHovered, HUD.frame)
+    imgui.PushStyleColor(ImGuiCol_FrameBgActive, HUD.frame)
+    imgui.PushStyleVar(ImGuiStyleVar_FramePadding, { 26, 5 })
+    imgui.PushStyleVar(ImGuiStyleVar_FrameRounding, 5)
+    imgui.PushItemWidth(w)
+    imgui.InputText('##empy_search_' .. state.tab, VT.search, 48)
+    local active = imgui.IsItemActive()
+    imgui.PopItemWidth()
+    imgui.PopStyleVar(2)
+    imgui.PopStyleColor(3)
+    local dl = DL()
+    dl:AddRect({ x + 0.5, y + 0.5 }, { x + w - 0.5, y + h - 0.5 }, col(HUD.edge, active and 0.75 or 0.22), 5, CORNERS_ALL, 1)
+    local cy = y + h * 0.5
+    dl:AddCircle({ x + 12, cy - 1 }, 4.5, col(active and HUD.accent or HUD.muted), 12, 1.4)
+    dl:AddLine({ x + 15, cy + 2 }, { x + 18.5, cy + 5.5 }, col(active and HUD.accent or HUD.muted), 1.6)
+    if (VT.search[1] or '') == '' and not active then text(x + 26, y + 5, HUD.faint, 'Search...') end
+    return h
+end
+
+-- Compact scrolling list. rows: { key, label, sub, icon, icon_dim, badge,
+-- badge_col, light, mine } or { header = true, label, badge }. Returns the key
+-- of a clicked row.
+function VT.list(id, rows, sel, w, h)
+    local picked = nil
+    imgui.PushStyleColor(ImGuiCol_ChildBg, { 0, 0, 0, 0 })
+    imgui.PushStyleVar(ImGuiStyleVar_ItemSpacing, { 0, 2 })
+    if imgui.BeginChild(id, { w, h }, false) then
+        local lh = line_h()
+        local rh = math.max(lh + 10, 24)
+        -- start from ImGui's cursor (it already includes the scroll offset)
+        local x0, y0 = imgui.GetCursorScreenPos()
+        imgui.SetCursorScreenPos({ x0 + 4, y0 + 4 })
+        local _, wy = imgui.GetWindowPos()
+        wy = tonumber(wy) or y0
+        local iw = w - 8 - 10                      -- room for the scrollbar
+        local dl = DL()
+        local shown = 0
+        for i, r in ipairs(rows) do
+            if VT.matches(r) then
+                local x, y = imgui.GetCursorScreenPos()
+                local visible = y + rh >= wy and y <= wy + h
+                if r.header then
+                    imgui.Dummy({ iw, lh + 10 })
+                    if visible then
+                        text(x + 6, y + 6, HUD.accent, r.label)
+                        if r.badge then rtext(x + iw - 6, y + 6, r.badge_col or HUD.faint, r.badge) end
+                        T.rule(x + 6, y + lh + 9, iw - 12, HUD.accent, 0.6)
+                    end
+                else
+                    shown = shown + 1
+                    if imgui.InvisibleButton(('##%s_%d'):format(id, i), { iw, rh }) then picked = r.key end
+                    local hov = imgui.IsItemHovered()
+                    if visible then
+                        local on = r.key == sel
+                        if on then
+                            dl:AddRectFilled({ x + 2, y }, { x + iw - 2, y + rh }, col(HUD.sel_fill), 5)
+                            VT.glow_edge(x + 2, y, iw - 4, rh, HUD.accent)
+                        elseif hov then
+                            dl:AddRectFilled({ x + 2, y }, { x + iw - 2, y + rh }, col(HUD.frame, 0.9), 5)
+                        end
+                        local icy = y + rh * 0.5
+                        local tx = x + 10
+                        if r.icon then
+                            local isz = 20
+                            if icons.draw(r.icon, x + 8, icy - isz * 0.5, isz, r.icon_dim and 0.55 or 1) then
+                                tx = x + 8 + isz + 8
+                            else
+                                diamond(x + 14, icy, 4, HUD.accent2, false)
+                                tx = x + 26
+                            end
+                        elseif r.mark then
+                            diamond(x + 14, icy, 5, r.mark, true, 0.5)
+                            tx = x + 26
+                        end
+                        local right = x + iw - 8
+                        if r.light then dot(right - 4, icy, 3.5, r.light, 0.6); right = right - 14 end
+                        local bw = 0
+                        if r.badge then
+                            rtext(right, icy - lh * 0.5, r.badge_col or HUD.faint, r.badge)
+                            bw = text_w(r.badge) + 10
+                        end
+                        local avail = right - bw - tx
+                        local label = fit(r.label, avail)
+                        text(tx, icy - lh * 0.5, on and HUD.text or (r.mine and HUD.accent2 or HUD.subtext), label)
+                        if r.sub and text_w(label) + 10 + text_w(r.sub) <= avail then
+                            text(tx + text_w(label) + 10, icy - lh * 0.5, HUD.faint, r.sub)
+                        end
+                    end
+                end
+            end
+        end
+        if shown == 0 then
+            local x, y = imgui.GetCursorScreenPos()
+            text(x + 8, y + 6, HUD.faint, 'Nothing matches.')
+            imgui.Dummy({ iw, lh + 12 })
+        end
+        imgui.Dummy({ 0, 4 })
+    end
+    imgui.EndChild()
+    imgui.PopStyleVar(1)
+    imgui.PopStyleColor(1)
+    return picked
+end
+
+-- Detail panel: its own scrolling child, with the shared layout width set to it.
+function VT.detail(id, w, h, fn)
+    imgui.PushStyleColor(ImGuiCol_ChildBg, { 0, 0, 0, 0 })
+    if imgui.BeginChild(id, { w, h }, false) then
+        if VT.to_top then VT.to_top = false; pcall(imgui.SetScrollY, 0) end
+        local saved_cw, saved_left = ui.cw, ui.left_x
+        local cx, cy = imgui.GetCursorScreenPos()
+        ui.left_x, ui.cw = cx + 6, w - 16          -- leaves room for the scrollbar
+        imgui.SetCursorScreenPos({ cx + 12, cy + 12 })
+        ui.vault = true
+        local ok, err = pcall(fn)
+        ui.vault = false
+        imgui.Dummy({ 0, 8 })
+        ui.cw, ui.left_x = saved_cw, saved_left
+        if not ok then
+            local x, y = imgui.GetCursorScreenPos()
+            text(x + 12, y, HUD.bad, 'error: ' .. tostring(err))
+            imgui.Dummy({ 0, line_h() })
+        end
+    end
+    imgui.EndChild()
+    imgui.PopStyleColor(1)
+end
+
+-- Two columns: list panel (search, optional filter row, list) and detail panel.
+-- filters(x, y, w) draws the filter row and returns its height (optional).
+function VT.layout(kind, rows, sel, filters, detail_fn, need)
+    local x, y = imgui.GetCursorScreenPos()
+    local w = avail_w()
+    local h = VT.height()
+    -- the list gives up width first, so the detail keeps what its layout needs
+    need = need or (ui.layout and ui.layout.min) or 600
+    local lw = math.max(VT.LIST_MIN, math.min(VT.LIST_W, math.floor(w - need - 30)))
+    local dl = DL()
+    -- list panel
+    T.card_bg(x, y, lw, h, nil)
+    local sy = y + 8
+    sy = sy + VT.search_box(x + 8, sy, lw - 16) + 6
+    if filters then sy = sy + filters(x + 8, sy, lw - 16) + 6 end
+    dl:AddRectFilled({ x + 8, sy }, { x + lw - 8, sy + 1 }, col(HUD.edge, 0.18))
+    sy = sy + 3
+    imgui.SetCursorScreenPos({ x + 2, sy })
+    local picked = VT.list('##vlist_' .. kind, rows, sel, lw - 4, y + h - 4 - sy)
+    -- detail panel
+    local dx = x + lw + 10
+    local dw = w - lw - 10
+    T.card_bg(dx, y, dw, h, HUD.accent, 0.35)
+    imgui.SetCursorScreenPos({ dx + 2, y + 2 })
+    VT.detail('##vdetail_' .. kind, dw - 4, h - 4, detail_fn)
+    imgui.SetCursorScreenPos({ x, y })
+    advance(w, h)
+    if picked ~= nil and picked ~= sel then VT.to_top = true end
+    return picked
+end
+
+-- ARMOR: the 20 sets.
+function VT.armor()
+    local mj = main_job()
+    local rows = {}
+    for i, jd in ipairs(data.jobs) do
+        local d, t = progress_of(jd)
+        local best, bt = jd.pieces[1], -1
+        for _, p in ipairs(jd.pieces) do
+            local ot = owned_tier(p)
+            if ot > bt then best, bt = p, ot end
+        end
+        rows[#rows + 1] = { key = i, label = jd.set, sub = JOBS[i], icon = tier_item(best, math.max(bt, 0)).id,
+            icon_dim = bt < 0, badge = ('%d/%d'):format(d, t),
+            badge_col = (d == t) and HUD.gold or (d > 0 and HUD.text or HUD.faint),
+            light = (i == mj) and HUD.accent or nil, mine = i == mj,
+            search = (JOBS[i] .. ' ' .. jd.set):lower() }
+    end
+    local sel = job_index()
+    local picked = VT.layout('armor', rows, sel, nil, function() render_set() end)
+    if picked then
+        state.job = (picked ~= mj) and picked or nil
+        state.aset = true
+        save_settings()
+    end
+end
+
+-- WEAPONS: a "Completed" entry and the 14 weapons with their trial status.
+function VT.weapons(here)
+    local prog, done = counts()
+    local mine = {}
+    for _, w in ipairs(job_weapons()) do mine[w] = true end
+    local rows = {
+        { key = 'done', label = 'Completed', mark = HUD.gold, badge = ('%d/%d'):format(done, #wdata.weapons),
+          badge_col = HUD.gold, search = 'completed done' },
+        { header = true, label = 'WEAPONS', badge = prog > 0 and (prog .. ' in progress') or nil },
+    }
+    for i, w in ipairs(wdata.weapons) do
+        local st = wstate_of(w)
+        local got, active = st.idx > #w.steps, st.idx > 0 and st.idx <= #w.steps
+        local f = VT.wfilter
+        if f == 'all' or (f == 'mine' and mine[w]) or (f == 'active' and active) or (f == 'done' and got) then
+            local tag, tc = status_of(w)
+            rows[#rows + 1] = { key = i, label = w.name, sub = w.skill, icon = empy_icon_id(w, st),
+                badge = tag, badge_col = tc, light = got and HUD.owned or (active and HUD.yellow or nil),
+                mine = mine[w] or false, search = (w.name .. ' ' .. w.skill .. ' ' .. table.concat(w.jobs, ' ')):lower() }
+        end
+    end
+    local sel = (state.wtab == 3) and 'done' or weapon_index(selected_weapon())
+    local function filters(x, y, w)
+        local items = { { 'all', 'ALL' }, { 'mine', 'MINE' }, { 'active', 'ACTIVE' }, { 'done', 'DONE' } }
+        local p, _, th = seg_tabs('vwf', items, VT.wfilter, x, y, HUD.accent, true, { width = w })
+        if p then VT.wfilter = p end
+        return th
+    end
+    local picked = VT.layout('weapons', rows, sel, filters, function()
+        -- bigger text in the trial table: scale the font and the measured columns
+        local base = ui.layout
+        local scaled = pcall(imgui.SetWindowFontScale, WTEXT)
+        if scaled and base then
+            local L = {}
+            for k, v in pairs(base) do L[k] = v end
+            for _, k in ipairs({ 'w_no', 'w_hold', 'w_obj', 'w_stat', 'w_wname', 'w_skill' }) do L[k] = base[k] * WTEXT end
+            ui.layout = L
+        end
+        local ok, err = pcall(function()
+            if state.wtab == 3 then render_completed() else render_stages(here, true) end
+        end)
+        if scaled then pcall(imgui.SetWindowFontScale, 1.0) end
+        ui.layout = base
+        if not ok then error(err, 0) end
+    end, ui.layout and (ui.layout.weapons * WTEXT + 60) or nil)
+    if picked == 'done' then
+        state.wtab = 3
+        save_settings()
+    elseif picked then
+        state.wsel, state.wtab = picked, 2
+        save_settings()
+    end
+end
+
+--------------------------------------------------------------------------------
 -- Section entry points (called from abyhub.lua)
 --------------------------------------------------------------------------------
 
 -- Width the Empyrean views need (so abyhub keeps one width on every tab).
 function M.min_width()
     local L = measure_layout()
-    return L.min, L.armor_two
+    -- list column + whichever detail is widest (the trial table uses bigger text)
+    return math.max(L.min, L.weapons * WTEXT + 60) + VT.LIST_MIN + 30, L.armor_two
 end
 
 -- Called every frame while the window is open on the Empyrean tab.
@@ -1325,25 +1593,13 @@ function M.render()
         if jc then ui.picker = not ui.picker end
 
         local h = th
-        if state.tab == 3 then
-            local sub = {
-                { 2, 'STAGES' },
-                { 3, 'COMPLETED', ('%d/%d'):format(done, #wdata.weapons), HUD.gold },
-            }
-            local sw = seg_width(sub, true)
-            local sx, sy = x + tw + 22, y
-            if sx + sw > jx - 12 then sx, sy = x, y + th + 6; h = th * 2 + 6 end
-            if sy == y then DL():AddLine({ sx - 11, y + 5 }, { sx - 11, y + th - 5 }, col(HUD.edge, 0.18), 1) end
-            local sp = seg_tabs('wtab', sub, state.wtab, sx, sy, HUD.gold, true)
-            if sp and sp ~= state.wtab then state.wtab = sp; save_settings() end
-        end
         return h
     end)
     render_job_picker()
 
     if state.tab == 2 then render_nms()
-    elseif state.tab == 3 then render_weapons()
-    else render_armor() end
+    elseif state.tab == 3 then VT.weapons(player_zone_name())
+    else VT.armor() end
 end
 
 -- /aby armor | nms | weapons [stages|completed] | job <JOB|auto> | refresh | compact
