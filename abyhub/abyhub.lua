@@ -1,6 +1,6 @@
 addon.name = 'abyhub'
 addon.author = 'Laudout'
-addon.version = '3.1.0'
+addon.version = '3.2.0'
 addon.desc = 'Abyssea + Empyrean toolkit: key items, staggers, atma, lights, Empyrean armour, NMs and weapons.'
 
 require('common')
@@ -883,6 +883,7 @@ end
 -- Small persistent settings. lights_auto: show the lights bar automatically
 -- while you're in an Abyssea zone (hidden everywhere else).
 state.lights_auto = true
+state.nminfo = false   -- NM info wheel (shows when your target cursor is on an Abyssea NM)
 state.lights_open = { true }   -- ImGui window open flag for the lights bar
 
 local function settings_file()
@@ -894,7 +895,8 @@ local function save_settings()
         local f = io.open(settings_file(), 'w')
         if not f then return end
         local sz = state.win_size
-        f:write(('return { lights_auto = %s, tab = %d%s }\n'):format(state.lights_auto and 'true' or 'false', state.tab or 1,
+        f:write(('return { lights_auto = %s, nminfo = %s, tab = %d%s }\n'):format(state.lights_auto and 'true' or 'false',
+            state.nminfo and 'true' or 'false', state.tab or 1,
             sz and (', win_w = %d, win_h = %d'):format(sz[1], sz[2]) or ''))
         f:close()
     end)
@@ -904,6 +906,7 @@ local function load_settings()
     local ok, data = pcall(dofile, settings_file())
     if ok and type(data) == 'table' then
         if data.lights_auto ~= nil then state.lights_auto = data.lights_auto == true end
+        if data.nminfo ~= nil then state.nminfo = data.nminfo == true end
         if tonumber(data.tab) and data.tab >= 1 and data.tab <= 4 then state.tab = data.tab end
         if tonumber(data.win_w) and tonumber(data.win_h) then state.win_size = { data.win_w, data.win_h } end
     end
@@ -1248,6 +1251,8 @@ local HELP = {
     '/aby all                     staggers: show every blue / yellow window',
     '/aby alerts [target|any|off] stagger popups',
     '/aby test [red|yellow|blue|white]   test a stagger popup',
+    '/aby nminfo [on|off]         NM info wheel when your target cursor is on an Abyssea NM',
+    '/aby nminfo test <NM>        preview the wheel for an NM (20 seconds)',
     '/aby reset                   re-centre the window',
     '/aby debug                   print window / scroll sizes (for bug reports)',
     '/abylights                   lights bar on / off (shows by itself in Abyssea)',
@@ -1255,6 +1260,52 @@ local HELP = {
 }
 
 local function msg(s) print(chat.header(addon.name):append(chat.message(s))) end
+
+-- NM info data (used by /aby nminfo and the NM info wheel further down)
+local edata = require('empydata')
+
+local NMI = {}   -- built once: name -> zone, boss, drops, atma, empyrean
+do
+    local ki_name, ki_area, needed_by = {}, {}, {}
+    local zone_name = {}
+    for _, area in ipairs(AREAS) do
+        zone_name[area.zone] = area.name
+        for _, ki in ipairs(area.kis) do ki_name[ki[1]], ki_area[ki[1]] = ki[2], area.name end
+    end
+    NMI.ki_name, NMI.ki_area, NMI.needed_by = ki_name, ki_area, needed_by
+    NMI.zone, NMI.boss, NMI.drops, NMI.atma, NMI.empy = {}, {}, {}, {}, {}
+    for _, b in ipairs(BOSSES) do
+        NMI.boss[b.name] = b
+        NMI.zone[b.name] = b.area
+        for _, ki in ipairs(b.kis) do needed_by[ki] = b.name end
+    end
+    for ki, nm in pairs(KI_SOURCE) do
+        if type(nm) == 'string' then
+            NMI.drops[nm] = NMI.drops[nm] or {}
+            table.insert(NMI.drops[nm], ki)
+            NMI.zone[nm] = NMI.zone[nm] or ki_area[ki]
+        end
+    end
+    for _, list in pairs(NMI.drops) do table.sort(list) end
+    for _, a in ipairs(ATMA) do
+        if type(a[3]) == 'string' then
+            NMI.atma[a[3]] = NMI.atma[a[3]] or {}
+            table.insert(NMI.atma[a[3]], a)
+            NMI.zone[a[3]] = NMI.zone[a[3]] or zone_name[a[4]]
+        end
+    end
+    for iid, rows in pairs(edata.drops or {}) do
+        for _, r in ipairs(rows) do
+            local z, nm = tostring(r.nm):match('^(.-)|(.+)$')
+            if nm then
+                NMI.empy[nm] = NMI.empy[nm] or {}
+                table.insert(NMI.empy[nm], { iid, (edata.matNames or {})[iid] or ('Item ' .. iid), r.pct })
+                NMI.zone[nm] = NMI.zone[nm] or ('Abyssea-' .. z)
+            end
+        end
+    end
+    for _, list in pairs(NMI.empy) do table.sort(list, function(a, b) return (a[3] or 0) > (b[3] or 0) end) end
+end
 
 ashita.events.register('command', 'abyhub_command_cb', function(e)
     local args = e.command:args()
@@ -1304,6 +1355,23 @@ ashita.events.register('command', 'abyhub_command_cb', function(e)
         state.visible[1] = true
     elseif sub == 'hide' then
         state.visible[1] = false
+    elseif sub == 'nminfo' then
+        local a3 = (args[3] or ''):lower()
+        if a3 == 'test' then
+            local nm = table.concat(args, ' ', 4)
+            if nm == '' then nm = 'Glavoid' end
+            local found = nil
+            for k in pairs(NMI.zone) do if k:lower() == nm:lower() then found = k end end
+            if not found then msg('Unknown NM: ' .. nm); return end
+            state.nminfo = true
+            state.nm_test = { name = found, until_t = os.clock() + 20 }
+            msg('NM info: showing ' .. found .. ' for 20 seconds.')
+        else
+            if a3 == 'on' then state.nminfo = true elseif a3 == 'off' then state.nminfo = false
+            else state.nminfo = not state.nminfo end
+            msg(state.nminfo and 'NM info on: put your target cursor on an Abyssea NM.' or 'NM info off.')
+        end
+        save_settings()
     elseif sub == 'debug' then
         win_debug_request = true
     elseif sub == 'reset' then
@@ -1748,6 +1816,9 @@ local function render_controls()
         local label3 = state.alert_mode == 'any' and 'Stagger popups (any mob)' or 'Stagger popups'
         local c3 = toggle_chip('##aby_alerts', label3, state.alert_mode ~= 'off', x + w1 + w2 + 16, y, HUD.gold)
         if c3 then state.alert_mode = (state.alert_mode == 'off') and 'target' or 'off' end
+        local w3 = T.toggle_w(label3)
+        local c4 = toggle_chip('##aby_nminfo', 'NM info', state.nminfo, x + w1 + w2 + w3 + 24, y, HUD.accent)
+        if c4 then state.nminfo = not state.nminfo; save_settings() end
         return line_h() + 10
     end)
 end
@@ -2404,6 +2475,342 @@ local function lights_width()
     return text_w('LIGHTS') + 22 + 20 + 7 * cell + 6 * 10 + time_w
 end
 
+--------------------------------------------------------------------------------
+-- NM info wheel: put your target cursor on an Abyssea NM and a radial info card
+-- appears (pop key items, what it drops, atma, Empyrean drops, staggers, zone).
+-- It goes away when the cursor leaves the NM. /aby nminfo turns it on / off.
+--------------------------------------------------------------------------------
+
+-- The NM under your target cursor (main target or the one you're selecting), if abyhub knows it.
+local function nm_under_cursor()
+    local ok, name, hp = pcall(function()
+        local t = AshitaCore:GetMemoryManager():GetTarget()
+        for _, slot in ipairs({ 0, 1 }) do
+            local idx = t:GetTargetIndex(slot)
+            if idx and idx ~= 0 then
+                local e = GetEntity(idx)
+                if e and e.Name and NMI.zone[e.Name] then return e.Name, tonumber(e.HPPercent) end
+            end
+        end
+        return nil
+    end)
+    if ok then return name, hp end
+    return nil
+end
+
+local function pct_str(p)
+    p = tonumber(p) or 0
+    if p >= 10 then return ('%d%%'):format(math.floor(p + 0.5)) end
+    return ('%.1f%%'):format(p)
+end
+
+-- Segment content: { label, icon, lines = { {text, colour}, ... }, detail = { ... } }
+local function nm_segments(name)
+    local segs = {}
+    local function L(t, c) return { t, c or HUD.text } end
+
+    -- Pop
+    do
+        local s = { label = 'POP', icon = 'key', lines = {}, detail = {} }
+        local b = NMI.boss[name]
+        if b then
+            local have, missing = 0, {}
+            for _, ki in ipairs(b.kis) do
+                local got = has_key_item(ki)
+                if got then have = have + 1 else missing[#missing + 1] = ki end
+                local from = KI_SOURCE[ki]
+                s.detail[#s.detail + 1] = L((got and 'Have  ' or 'Need  ') .. (NMI.ki_name[ki] or ki)
+                    .. (type(from) == 'string' and ('  (' .. from .. ')') or ''), got and HUD.owned or HUD.text)
+            end
+            local all = have == #b.kis
+            s.lines[1] = L(('%d / %d key items'):format(have, #b.kis), all and HUD.owned or HUD.text)
+            if all then
+                s.lines[2] = L('Ready to pop!', HUD.owned)
+            else
+                for i = 1, math.min(2, #missing) do s.lines[#s.lines + 1] = L(NMI.ki_name[missing[i]] or '?', HUD.muted) end
+            end
+        else
+            s.lines[1] = L('Pop item / timed', HUD.muted)
+            s.lines[2] = L('(not a key item NM)', HUD.faint)
+            s.detail[1] = L('No key item pop for this NM in abyhub\'s data.', HUD.muted)
+        end
+        segs[#segs + 1] = s
+    end
+
+    -- Drops (pop key items for the bigger NMs)
+    do
+        local s = { label = 'DROPS', icon = 'chest', lines = {}, detail = {} }
+        local list = NMI.drops[name] or {}
+        for i, ki in ipairs(list) do
+            local got = has_key_item(ki)
+            local nm = NMI.needed_by[ki]
+            if i <= 2 then s.lines[#s.lines + 1] = L(NMI.ki_name[ki] or ('KI ' .. ki), got and HUD.owned or HUD.text) end
+            s.detail[#s.detail + 1] = L((got and 'Have  ' or '') .. (NMI.ki_name[ki] or ki) .. (nm and ('  -> pops ' .. nm) or ''),
+                got and HUD.owned or HUD.text)
+        end
+        if #list == 1 and NMI.needed_by[list[1]] then s.lines[2] = L('for ' .. NMI.needed_by[list[1]], HUD.muted) end
+        if #list == 0 then
+            s.lines[1] = L('No pop key items', HUD.faint)
+            s.detail[1] = L('This NM doesn\'t drop a pop key item.', HUD.muted)
+        end
+        segs[#segs + 1] = s
+    end
+
+    -- Atma
+    do
+        local s = { label = 'ATMA', icon = 'star', lines = {}, detail = {} }
+        local list = NMI.atma[name] or {}
+        for i, a in ipairs(list) do
+            local got = has_key_item(a[1])
+            if i <= 2 then s.lines[#s.lines + 1] = L(a[2], got and HUD.owned or HUD.gold) end
+            s.detail[#s.detail + 1] = L(('Atma of %s%s'):format(a[2], got and '  (owned)' or ''), got and HUD.owned or HUD.gold)
+            for _, fx in ipairs(ATMA_FX[a[1]] or {}) do s.detail[#s.detail + 1] = L('   ' .. fx, HUD.subtext) end
+        end
+        if #list == 1 then s.lines[2] = L(has_key_item(list[1][1]) and 'Owned' or 'Not owned', has_key_item(list[1][1]) and HUD.owned or HUD.muted) end
+        if #list == 0 then
+            s.lines[1] = L('No atma', HUD.faint)
+            s.detail[1] = L('This NM doesn\'t drop an atma.', HUD.muted)
+        end
+        segs[#segs + 1] = s
+    end
+
+    -- Empyrean drops
+    do
+        local s = { label = 'EMPYREAN', icon = 'shield', lines = {}, detail = {} }
+        local list = NMI.empy[name] or {}
+        for i, it in ipairs(list) do
+            if i <= 2 then s.lines[#s.lines + 1] = L(('%s %s'):format(pct_str(it[3]), it[2]), HUD.subtext) end
+            s.detail[#s.detail + 1] = L(('%-6s %s'):format(pct_str(it[3]), it[2]), HUD.text)
+        end
+        if #list > 2 then s.lines[3] = L(('+%d more'):format(#list - 2), HUD.faint) end
+        if #list == 0 then
+            s.lines[1] = L('No seals / stones', HUD.faint)
+            s.detail[1] = L('No Empyrean armour drops listed for this NM.', HUD.muted)
+        end
+        segs[#segs + 1] = s
+    end
+
+    -- Staggers
+    do
+        local s = { label = 'STAGGER', icon = 'bolt', lines = {}, detail = {} }
+        local wnd, _, rem = blue_window_info()
+        local day = current_day()
+        local el = DAY_ELEMENT[day]
+        if state.vana_ok then
+            s.lines[1] = L('Blue: ' .. wnd.name, HUD.blue)
+            s.lines[2] = L(('%s in %dm'):format(wnd.next, math.max(1, math.floor(rem / 60 + 0.5))), HUD.muted)
+            s.lines[3] = L('Yellow: ' .. (el or day), ELEMENT_COLOR[el or ''] or HUD.yellow)
+            s.detail = {
+                L('Blue (physical WS): ' .. wnd.name .. ' now', HUD.blue),
+                L(('Changes to %s in %s'):format(wnd.next, fmt_earth(rem)), HUD.muted),
+                L(('Yellow (magic): %s spells today (%s)'):format(el or '?', day), ELEMENT_COLOR[el or ''] or HUD.yellow),
+                L('Red (elemental WS): see the Staggers tab', HUD.red),
+            }
+        else
+            s.lines[1] = L('Waiting for time', HUD.faint)
+            s.detail[1] = L('Vana\'diel time not read yet.', HUD.muted)
+        end
+        segs[#segs + 1] = s
+    end
+
+    -- Zone
+    do
+        local s = { label = 'ZONE', icon = 'pin', lines = {}, detail = {} }
+        local z = NMI.zone[name] or 'Abyssea'
+        s.lines[1] = L((z:gsub('^Abyssea%-', '')), HUD.text)
+        local b = NMI.boss[name]
+        if b then s.lines[2] = L('Zone boss NM', HUD.accent2) end
+        s.detail[1] = L(z, HUD.text)
+        if b then s.detail[2] = L('Needs ' .. #b.kis .. ' key items to pop', HUD.muted) end
+        segs[#segs + 1] = s
+    end
+    return segs
+end
+
+-- Little line-art icons for the segments.
+local function nm_icon(kind, x, y, s, c)
+    local dl = DL()
+    local cc = col(c)
+    local h = s * 0.5
+    if kind == 'key' then
+        dl:AddCircle({ x - h * 0.45, y }, h * 0.4, cc, 12, 1.6)
+        dl:AddLine({ x - h * 0.05, y }, { x + h, y }, cc, 1.6)
+        dl:AddLine({ x + h * 0.55, y }, { x + h * 0.55, y + h * 0.4 }, cc, 1.6)
+        dl:AddLine({ x + h * 0.85, y }, { x + h * 0.85, y + h * 0.3 }, cc, 1.6)
+    elseif kind == 'chest' then
+        dl:AddRect({ x - h, y - h * 0.35 }, { x + h, y + h * 0.7 }, cc, 2, CORNERS_ALL, 1.6)
+        dl:AddLine({ x - h, y + h * 0.05 }, { x + h, y + h * 0.05 }, cc, 1.4)
+        dl:AddRectFilled({ x - h * 0.15, y - h * 0.05 }, { x + h * 0.15, y + h * 0.25 }, cc)
+        dl:AddLine({ x - h * 0.8, y - h * 0.35 }, { x - h * 0.6, y - h * 0.7 }, cc, 1.4)
+        dl:AddLine({ x - h * 0.6, y - h * 0.7 }, { x + h * 0.6, y - h * 0.7 }, cc, 1.4)
+        dl:AddLine({ x + h * 0.6, y - h * 0.7 }, { x + h * 0.8, y - h * 0.35 }, cc, 1.4)
+    elseif kind == 'star' then
+        dl:AddQuadFilled({ x, y - h }, { x + h * 0.28, y }, { x, y + h }, { x - h * 0.28, y }, cc)
+        dl:AddQuadFilled({ x - h, y }, { x, y - h * 0.28 }, { x + h, y }, { x, y + h * 0.28 }, cc)
+    elseif kind == 'shield' then
+        local p = { { x - h * 0.8, y - h * 0.8 }, { x + h * 0.8, y - h * 0.8 }, { x + h * 0.8, y }, { x, y + h }, { x - h * 0.8, y } }
+        for i = 1, #p do dl:AddLine(p[i], p[i % #p + 1], cc, 1.6) end
+        dl:AddLine({ x, y - h * 0.8 }, { x, y + h }, col(c, 0.6), 1.2)
+    elseif kind == 'bolt' then
+        local p = { { x + h * 0.3, y - h }, { x - h * 0.5, y + h * 0.1 }, { x + h * 0.05, y + h * 0.1 }, { x - h * 0.3, y + h } }
+        for i = 1, #p - 1 do dl:AddLine(p[i], p[i + 1], cc, 2) end
+    elseif kind == 'pin' then
+        dl:AddCircle({ x, y - h * 0.3 }, h * 0.55, cc, 14, 1.6)
+        dl:AddCircleFilled({ x, y - h * 0.3 }, h * 0.18, cc, 8)
+        dl:AddLine({ x - h * 0.45, y + h * 0.05 }, { x, y + h }, cc, 1.6)
+        dl:AddLine({ x + h * 0.45, y + h * 0.05 }, { x, y + h }, cc, 1.6)
+    end
+end
+
+local NMW = { R = 215, r0 = 64, PW = 320 }
+
+local function render_nminfo()
+    if not state.nminfo then return end
+    local name, hp
+    if state.nm_test and os.clock() < state.nm_test.until_t then
+        name, hp = state.nm_test.name, 100
+    else
+        state.nm_test = nil
+        if not in_abyssea() then return end
+        name, hp = nm_under_cursor()
+    end
+    if not name then return end
+
+    local io_ok, io = pcall(imgui.GetIO)
+    local sw = (io_ok and io and io.DisplaySize and io.DisplaySize.x) or 1920
+    local sh = (io_ok and io and io.DisplaySize and io.DisplaySize.y) or 1080
+    local Rr, r0, PW = NMW.R, NMW.r0, NMW.PW
+    local cx, cy = sw - Rr - 40, math.floor(sh * 0.42)
+    local wx, wy = cx - Rr - 16 - PW, cy - Rr - 4
+    local ww, wh = PW + 16 + Rr * 2 + 8, Rr * 2 + 8
+
+    T.push_style()
+    local font_pushed = T.push_font()
+    imgui.PushStyleVar(ImGuiStyleVar_WindowPadding, { 0, 0 })
+    imgui.PushStyleColor(ImGuiCol_WindowBg, { 0, 0, 0, 0 })
+    imgui.PushStyleColor(ImGuiCol_Border, { 0, 0, 0, 0 })
+    imgui.SetNextWindowPos({ wx, wy }, ImGuiCond_Always)
+    imgui.SetNextWindowSize({ ww, wh }, ImGuiCond_Always)
+    local flags = bit.bor(ImGuiWindowFlags_NoTitleBar, ImGuiWindowFlags_NoResize, ImGuiWindowFlags_NoMove,
+        ImGuiWindowFlags_NoInputs, ImGuiWindowFlags_NoScrollbar, ImGuiWindowFlags_NoSavedSettings,
+        ImGuiWindowFlags_NoFocusOnAppearing, ImGuiWindowFlags_NoBringToFrontOnFocus or 0, NO_DOCK)
+    undock_next()
+    if imgui.Begin('NM Info##abyhub_nminfo', true, flags) then
+        local dl = DL()
+        local lh = line_h()
+        local segs = nm_segments(name)
+        local n = #segs
+        local step = 2 * math.pi / n
+        local a0 = -math.pi / 2           -- first segment centred at the top
+        local function pt(a, r) return { cx + math.cos(a) * r, cy + math.sin(a) * r } end
+
+        -- which segment the mouse is over (no clicks taken: the wheel lets them through)
+        local hov = nil
+        local mok, mx, my = pcall(imgui.GetMousePos)
+        mx, my = tonumber(mx), tonumber(my)
+        if mok and mx and my then
+            local dx, dy = mx - cx, my - cy
+            local d = math.sqrt(dx * dx + dy * dy)
+            if d > r0 and d < Rr then
+                local a = math.atan2(dy, dx) - (a0 - step / 2)
+                a = a % (2 * math.pi)
+                hov = math.floor(a / step) + 1
+            end
+        end
+
+        -- disc
+        dl:AddCircleFilled({ cx, cy }, Rr, col({ 0.035, 0.040, 0.060, 0.82 }), 96)
+        dl:AddCircleFilled({ cx, cy }, Rr * 0.97, col({ 0.07, 0.075, 0.10, 0.35 }), 96)
+        dl:AddCircle({ cx, cy }, Rr - 0.5, col(HUD.accent, 0.45), 96, 1.5)
+
+        -- hovered segment: lighter wedge with a bright edge
+        if hov then
+            local sa = a0 - step / 2 + (hov - 1) * step
+            local parts = 16
+            for k = 0, parts - 1 do
+                local t1, t2 = sa + step * k / parts, sa + step * (k + 1) / parts
+                local p1, p2, p3, p4 = pt(t1, r0), pt(t1, Rr), pt(t2, Rr), pt(t2, r0)
+                dl:AddTriangleFilled(p1, p2, p3, col({ 1, 1, 1, 0.07 }))
+                dl:AddTriangleFilled(p1, p3, p4, col({ 1, 1, 1, 0.07 }))
+                dl:AddLine(p2, p3, col(HUD.gold, 0.9), 2)
+            end
+        end
+
+        -- dividers: bright bars with a soft glow
+        for k = 0, n - 1 do
+            local a = a0 - step / 2 + k * step
+            local p1, p2 = pt(a, r0 + 2), pt(a, Rr - 2)
+            dl:AddLine(p1, p2, col({ 1, 1, 1, 0.07 }), 7)
+            dl:AddLine(p1, p2, col({ 0.92, 0.90, 0.86, 0.55 }), 2)
+        end
+
+        -- segment contents
+        local rc = (r0 + Rr) * 0.5 + 8
+        local maxw = rc * 0.9
+        for i, sg in ipairs(segs) do
+            local a = a0 + (i - 1) * step
+            local c = pt(a, rc)
+            local hot = hov == i
+            local nl = #sg.lines
+            local block = 22 + lh + 4 + nl * (lh + 1)
+            local by = c[2] - block * 0.5
+            nm_icon(sg.icon, c[1], by + 9, 18, hot and HUD.gold or HUD.text)
+            local ly = by + 22
+            text(c[1] - text_w(sg.label) * 0.5, ly, hot and HUD.gold or HUD.accent2, sg.label)
+            ly = ly + lh + 4
+            for _, ln in ipairs(sg.lines) do
+                local t = fit(ln[1], maxw)
+                text(c[1] - text_w(t) * 0.5, ly, ln[2], t)
+                ly = ly + lh + 1
+            end
+        end
+
+        -- centre: name, HP
+        dl:AddCircleFilled({ cx, cy }, r0, col({ 0.10, 0.07, 0.05, 0.96 }), 48)
+        dl:AddCircle({ cx, cy }, r0 - 0.5, col(HUD.accent, 0.9), 48, 1.5)
+        dl:AddCircle({ cx, cy }, r0 - 5, col(HUD.accent, 0.25), 48, 1)
+        local nm1, nm2 = name, nil
+        if text_w(name) > r0 * 1.7 then
+            local a, b = name:match('^(.-)%s+(%S+)$')
+            if a then nm1, nm2 = a, b end
+        end
+        local ty = cy - (nm2 and lh * 1.5 or lh) - 2
+        nm1 = fit(nm1, r0 * 1.75)
+        text(cx - text_w(nm1) * 0.5, ty, HUD.gold, nm1)
+        if nm2 then
+            nm2 = fit(nm2, r0 * 1.75)
+            text(cx - text_w(nm2) * 0.5, ty + lh, HUD.gold, nm2)
+        end
+        local hpv = hp or 0
+        local bw = r0 * 1.2
+        bar(cx - bw * 0.5, cy + lh * 0.5 + 2, bw, 4, hpv / 100, hpv > 50 and HUD.owned or (hpv > 25 and HUD.warn or HUD.bad))
+        local hs = ('HP %d%%'):format(hpv)
+        text(cx - text_w(hs) * 0.5, cy + lh * 0.5 + 10, HUD.muted, hs)
+
+        -- detail card for the hovered segment, to the left of the wheel
+        if hov and segs[hov] then
+            local sg = segs[hov]
+            local lines = sg.detail
+            local ph = 14 + lh + 8 + #lines * (lh + 3) + 10
+            local px, py = cx - Rr - 16 - PW, math.max(wy + 2, math.min(cy - ph * 0.5, wy + wh - ph - 2))
+            card_bg(px, py, PW, ph, HUD.accent, 0.8)
+            nm_icon(sg.icon, px + 18, py + 12 + lh * 0.5, 14, HUD.gold)
+            text(px + 32, py + 12, HUD.gold, sg.label .. '  -  ' .. name)
+            T.rule(px + 10, py + 12 + lh + 4, PW - 20, HUD.accent, 0.6)
+            local ly = py + 14 + lh + 8
+            for _, ln in ipairs(lines) do
+                text(px + 12, ly, ln[2], fit(ln[1], PW - 24))
+                ly = ly + lh + 3
+            end
+        end
+    end
+    imgui.End()
+    imgui.PopStyleColor(2)
+    imgui.PopStyleVar(1)
+    T.pop_font(font_pushed)
+    T.pop_style()
+end
+
 local render_lights_window -- defined after push_style/pop_style
 
 local push_style, pop_style = T.push_style, T.pop_style
@@ -2475,6 +2882,7 @@ ashita.events.register('d3d_present', 'abyhub_present_cb', function()
     load_lights()
     render_alerts()
     render_lights_window()
+    render_nminfo()
 
     if not state.visible[1] then return end
 
