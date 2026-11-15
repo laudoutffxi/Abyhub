@@ -10,6 +10,7 @@ local imgui = require('imgui')
 local bit = require('bit')
 
 local T = require('abytheme')     -- shared drawing helpers (blue framed theme)
+local hud = require('abyhud')     -- HUD dashboard (tester redesign); /aby classic for the old window
 local win_reset_request = false   -- set by /aby reset
 local win_debug_request = false   -- set by /aby debug
 
@@ -885,6 +886,7 @@ end
 -- while you're in an Abyssea zone (hidden everywhere else).
 state.lights_auto = true
 state.lights_open = { true }   -- ImGui window open flag for the lights bar
+state.hud_mode = false         -- false = the crafthub-style window (default); true = the old sidebar window
 
 local function settings_file()
     return ('%s/abyhub_settings.lua'):format(addon.path)
@@ -895,8 +897,8 @@ local function save_settings()
         local f = io.open(settings_file(), 'w')
         if not f then return end
         local sz = state.win_size
-        f:write(('return { lights_auto = %s, tab = %d%s }\n'):format(state.lights_auto and 'true' or 'false', state.tab or 1,
-            sz and (', win_w = %d, win_h = %d'):format(sz[1], sz[2]) or ''))
+        f:write(('return { design = 2, lights_auto = %s, tab = %d, hud = %s%s }\n'):format(state.lights_auto and 'true' or 'false', state.tab or 1,
+            state.hud_mode and 'true' or 'false', sz and (', win_w = %d, win_h = %d'):format(sz[1], sz[2]) or ''))
         f:close()
     end)
 end
@@ -907,6 +909,8 @@ local function load_settings()
         if data.lights_auto ~= nil then state.lights_auto = data.lights_auto == true end
         if tonumber(data.tab) and data.tab >= 1 and data.tab <= 4 then state.tab = data.tab end
         if tonumber(data.win_w) and tonumber(data.win_h) then state.win_size = { data.win_w, data.win_h } end
+        -- design 2 = the crafthub look; older settings files open in it once
+        if data.hud ~= nil and data.design == 2 then state.hud_mode = data.hud == true end
     end
 end
 
@@ -1192,6 +1196,7 @@ local function push_alert(def, mob_id, mob_name)
         if a.def == def and a.mob_id == mob_id then table.remove(state.alerts, i) end
     end
     table.insert(state.alerts, 1, { def = def, mob_id = mob_id, mob_name = mob_name, t0 = os.clock() })
+    hud.log(('%s on %s'):format((def.label:gsub('!+$', ''):gsub('^%u', string.upper):lower():gsub('^%l', string.upper)), mob_name or 'target'), def.color)
     while #state.alerts > 4 do table.remove(state.alerts) end
 end
 
@@ -1240,6 +1245,8 @@ end)
 
 -- Commands: /aby [...] and /abylights [...]
 local HELP = {
+    '/aby hud                     the sidebar window (default)',
+    '/aby classic                 switch between the sidebar window and the classic window',
     '/aby                         show / hide the window',
     '/aby ki | stagger | atma | empyrean    open a tab',
     '/aby armor | nms | weapons [completed]    Empyrean views',
@@ -1292,6 +1299,7 @@ ashita.events.register('command', 'abyhub_command_cb', function(e)
     local function open(tab)
         state.tab = tab
         state.visible[1] = true
+        hud.view = 'tab'
         save_settings()
     end
 
@@ -1305,6 +1313,16 @@ ashita.events.register('command', 'abyhub_command_cb', function(e)
         state.visible[1] = true
     elseif sub == 'hide' then
         state.visible[1] = false
+    elseif sub == 'hud' then
+        state.hud_mode = true
+        hud.view = 'tab'
+        state.visible[1] = true
+        save_settings()
+    elseif sub == 'classic' then
+        state.hud_mode = not state.hud_mode
+        state.visible[1] = true
+        save_settings()
+        msg(state.hud_mode and 'Sidebar window on (/aby classic for the main window).' or 'Main window on (/aby hud for the sidebar window).')
     elseif sub == 'debug' then
         win_debug_request = true
     elseif sub == 'reset' then
@@ -1479,10 +1497,16 @@ local function render_header()
         { 4, 'EMPYREAN', nil },
     }
     band('aby_hdr', function(x, y, w)
-        -- row 1: two-tone title, Vana'diel clock and close on the right
-        local row_h = math.floor(lh * 1.5 + 6)
-        T.title_text(x, y, row_h, 'ABYSSEA TOOLKIT', HUD.text)
-        local title_w = T.title_w('ABYSSEA TOOLKIT')
+        -- row 1 (crafthub layout): title, the tabs as one segmented switch, search,
+        -- the Vana'diel clock and close; row 2: whose data this is
+        local nav_w = seg_width(tabs, false)
+        local nav_h = lh + 8 + 6
+        local row_h = math.max(math.floor(lh * 1.4 + 6), nav_h)
+        T.title_text(x, y, row_h, 'ABY HUB', HUD.text)
+        local title_w = T.title_w('ABY HUB')
+        local nx = x + title_w + 18
+        local picked = seg_tabs('aby_tab', tabs, state.tab, nx, y + (row_h - nav_h) * 0.5, HUD.accent, false)
+        if picked and picked ~= state.tab then state.tab = picked; save_settings() end
         local bs = lh + 6
         local bx = x + w - bs
         if T.close_button(bx, y + (row_h - bs) * 0.5, bs) then state.visible[1] = false end
@@ -1493,45 +1517,51 @@ local function render_header()
             local dc = ELEMENT_COLOR[DAY_ELEMENT[day] or ''] or HUD.text
             local clock = ('%02d:%02d'):format(state.vana_hour, state.vana_minute)
             clock_w = T.dot_pill_w(clock, day)
-            right = right - clock_w
-            T.dot_pill(nil, right, y + (row_h - (lh + 8)) * 0.5, clock, dc, day, dc, true)
+            if right - clock_w >= nx + nav_w + 10 then
+                right = right - clock_w
+                T.dot_pill(nil, right, y + (row_h - (lh + 8)) * 0.5, clock, dc, day, dc, true)
+                right = right - 10
+            end
         end
-        -- search box between the title and the clock
-        local sx = x + title_w + 16
-        local sw = math.min(420, right - 14 - sx)
-        if sw >= 150 then search_box(sx, y + (row_h - (lh + 10)) * 0.5, sw) end
+        -- search: in the top row when it fits, otherwise at the right of row 2
+        local sx0 = nx + nav_w + 16
+        local sw = math.min(320, right - sx0)
+        local search_row2 = sw < 160
+        if not search_row2 then search_box(right - sw, y + (row_h - (lh + 10)) * 0.5, sw) end
 
-        -- row 2: whose data this is (name bright, so mains and alts are easy to tell
-        -- apart), then jobs and zone in the muted info colour
-        local iy = y + row_h + 2
+        local iy = y + row_h + 4
+        local row2_h = lh
+        local info_max = w
+        if search_row2 then
+            local sw2 = math.max(160, math.min(320, math.floor(w * 0.45)))
+            row2_h = lh + 10
+            search_box(x + w - sw2, iy, sw2)
+            info_max = w - sw2 - 12
+            iy = iy + 5
+        end
         local who = player_name()
         local info_w = 0
         if who then
-            text(x, iy, HUD.text, who)
-            local ix = x + text_w(who)
+            local wn = fit(who, info_max)
+            text(x, iy, HUD.subtext, wn)
+            local ix = x + text_w(wn)
             local rest = {}
             local jobs = job_string()
             if jobs and jobs ~= '' then rest[#rest + 1] = jobs end
             local zn = zone_label()
             if zn then rest[#rest + 1] = zn end
             if #rest > 0 then
-                local s = '  \194\183  ' .. table.concat(rest, '  \194\183  ')
-                text(ix, iy, HUD.muted, s)
-                ix = ix + text_w(s)
+                local str = '  \194\183  ' .. table.concat(rest, '  \194\183  ')
+                local left = info_max - text_w(wn)
+                if left > 20 then text(ix, iy, HUD.faint, fit(str, left)) end
+                ix = ix + text_w(str)
             end
             info_w = ix - x
         else
-            text(x, iy, HUD.muted, 'Not logged in')
+            text(x, iy, HUD.faint, 'Not logged in')
         end
-
-        -- row 3: tabs as a segmented control
-        local ty = iy + lh + 10
-        local tabs_w = seg_width(tabs, false)
-        local picked, _, th = seg_tabs('aby_tab', tabs, state.tab, x, ty, HUD.accent, false)
-        if picked and picked ~= state.tab then state.tab = picked; save_settings() end
-        ui.header_need = math.max(title_w + 20 + 230 + (state.vana_ok and (T.dot_pill_w('00:00', 'Lightningday') + 10) or 0) + bs,
-            info_w, tabs_w) + 12
-        return ty + th - y + 4
+        ui.header_need = title_w + 18 + nav_w + bs + 18
+        return row_h + 4 + row2_h + 4
     end, { line = true })
 end
 
@@ -1633,8 +1663,8 @@ local function render_key_items()
     ki_follow_zone()
     local exp = ki_view.exp
 
-    -- Expansion picker: VISION / SCARS / HEROES
-    band('ki_exp', function(bx, by, bw)
+    -- Expansion picker: VISION / SCARS / HEROES (the sidebar does this when it is on)
+    if not ui.side_nav then band('ki_exp', function(bx, by, bw)
         local items = {}
         for _, e in ipairs(KI_EXPANSIONS) do
             local o, t = count_owned(e.key)
@@ -1643,7 +1673,7 @@ local function render_key_items()
         local p, _, th = seg_tabs('ki_exp', items, exp, bx, by, HUD.gold, true)
         if p then ki_view.exp = p end
         return th
-    end)
+    end) end
     exp = ki_view.exp
     x, y = imgui.GetCursorScreenPos()
 
@@ -2326,9 +2356,13 @@ local function render_atma_tab()
         local ao, at = count_abyssites()
         items[#items + 1] = { 'sites', 'ABYSSITES', count_badge(ao, at), badge_col(ao, at) }
 
-        local picked, _, th = seg_tabs('atma_grp', items, ui.atma_group, x, y, HUD.gold, true)
-        if picked then ui.atma_group = picked end
-        local row_y = y + th + 6
+        local _
+        local picked, th = nil, 0
+        if not ui.side_nav then
+            picked, _, th = seg_tabs('atma_grp', items, ui.atma_group, x, y, HUD.gold, true)
+            if picked then ui.atma_group = picked end
+        end
+        local row_y = (th > 0) and (y + th + 6) or y
 
         -- Level 2: zones (for expansions) + filter, on one row
         local zh = th
@@ -2343,13 +2377,17 @@ local function render_atma_tab()
             zp, _, zh = seg_tabs('atma_zone', zitems, ui.atma_zone[exp.key], x, row_y, exp.color, true)
             if zp then ui.atma_zone[exp.key] = zp end
         end
+        local fh = 0
         if ui.atma_group ~= 'sites' then
             local fitems = { { 'all', 'All' }, { 'owned', 'Owned' }, { 'missing', 'Missing' } }
-            local fp = seg_tabs('atma_filter', fitems, ui.atma_filter, x + w - seg_width(fitems, true), row_y, HUD.accent, true)
+            local fp
+            fp, _, fh = seg_tabs('atma_filter', fitems, ui.atma_filter, x + w - seg_width(fitems, true), row_y, HUD.accent, true)
             if fp then ui.atma_filter = fp end
         end
-        if exp or ui.atma_group ~= 'sites' then return th + 6 + zh end
-        return th
+        local top = (th > 0) and (th + 6) or 0
+        if exp then return top + math.max(zh or 0, fh or 0) end
+        if ui.atma_group ~= 'sites' then return top + (fh or 0) end
+        return math.max(th, 1)
     end)
 
     -- The group may have just been changed by a click in the strip above, so
@@ -2760,7 +2798,96 @@ end
 -- Main window size bookkeeping (see the present callback).
 local win = { content_h = nil, reset = false }
 
+-- HUD dashboard: everything it reads, in one table (keeps abyhub.lua's locals down).
+hud.setup({
+    state = state, version = addon.version,
+    AREAS = AREAS, BOSSES = BOSSES, KI_SOURCE = KI_SOURCE, ATMA = ATMA, ATMA_FX = ATMA_FX, ABYSSITES = ABYSSITES,
+    EXPANSIONS = EXPANSIONS, ZONE_NAME = ZONE_NAME, ZONE_EXPANSION = ZONE_EXPANSION,
+    RED = RED, BLUE = BLUE, YELLOW = YELLOW, LIGHTS = LIGHTS, LIGHT_ORDER = LIGHT_DISPLAY_ORDER,
+    DAY_ELEMENT = DAY_ELEMENT, ELEMENT_COLOR = ELEMENT_COLOR,
+    has_ki = has_key_item, have_pages = has_required_page, count_atma = count_atma, count_abyssites = count_abyssites,
+    player_zone = player_zone, player_name = player_name, job_string = job_string, current_day = current_day,
+    blue_window = blue_window, fmt_earth = fmt_earth, in_abyssea = in_abyssea, content_width = content_width,
+    save_settings = save_settings, set_heading = T.set_heading,
+    close = function() state.visible[1] = false end,
+    classic = function() state.hud_mode = false; save_settings(); msg('Classic window on (/aby hud for the sidebar window).') end,
+    -- sidebar sub-items
+    KI_EXPANSIONS = KI_EXPANSIONS, ki_counts = count_owned, empy = empy,
+    ki_get_exp = function() return ki_view.exp end,
+    ki_set_exp = function(e) ki_view.exp = e end,
+    atma_get_group = function() return ui.atma_group end,
+    atma_set_group = function(g) ui.atma_group = g end,
+    atma_groups = function()
+        local out = {}
+        for _, e in ipairs(EXPANSIONS) do
+            local zs = {}
+            for _, z in ipairs(e.zones) do zs[z[1]] = true end
+            local o, t = atma_count_where(function(a) return zs[a[4]] end)
+            out[#out + 1] = { key = e.key, label = e.label, o = o, t = t }
+        end
+        local oo, ot = atma_count_where(function(a) return a[4] == 0 end)
+        out[#out + 1] = { key = 'other', label = 'OTHER', o = oo, t = ot }
+        local ao, at = count_abyssites()
+        out[#out + 1] = { key = 'sites', label = 'ABYSSITES', o = ao, t = at }
+        return out
+    end,
+    toggle_lights = function() state.lights_auto = not state.lights_auto; save_settings() end,
+    push_classic_font = function() return T.push_font() end,
+    pop_classic_font = function(p) T.pop_font(p) end,
+    render_tab = function(tab, cw)
+        T.begin_content(cw)
+        if tab == 1 then render_key_items()
+        elseif tab == 3 then render_atma_tab()
+        elseif tab == 4 then empy.tick(); empy.render()
+        else render_staggers() end
+        T.end_content()
+    end,
+    render_search = function(cw)
+        T.begin_content(cw)
+        SR.render()
+        T.end_content()
+    end,
+})
+
+local hud_win = { placed = false }
+local function render_hud_window()
+    push_style()
+    imgui.PushStyleVar(ImGuiStyleVar_WindowPadding, { 0, 0 })
+    imgui.PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0)
+    imgui.PushStyleColor(ImGuiCol_WindowBg, { 0, 0, 0, 0 })
+    local vp = main_viewport()
+    local dw = math.min(hud.DEFAULT_W, vp[3] - 40)
+    local dh = math.min(hud.DEFAULT_H, vp[4] - 40)
+    imgui.SetNextWindowSize({ dw, dh }, ImGuiCond_FirstUseEver)
+    if not hud_win.placed then
+        imgui.SetNextWindowPos({ vp[1] + (vp[3] - dw) * 0.5, vp[2] + (vp[4] - dh) * 0.5 }, ImGuiCond_FirstUseEver)
+        hud_win.placed = true
+    end
+    if type(imgui.SetNextWindowSizeConstraints) == 'function' then
+        -- never narrower than the tabs' content needs (so nothing gets cut off)
+        local fp = T.push_font()          -- measure in the font the tabs are drawn with
+        local need_w = math.max(hud.MIN_W, content_width() + ui.inset * 2 + 90 + hud.side_w())
+        T.pop_font(fp)
+        imgui.SetNextWindowSizeConstraints({ math.min(need_w, vp[3]), math.min(hud.MIN_H, vp[4]) }, { vp[3], vp[4] })
+    end
+    local flags = bit.bor(ImGuiWindowFlags_NoTitleBar, ImGuiWindowFlags_NoCollapse, ImGuiWindowFlags_NoScrollbar,
+        ImGuiWindowFlags_NoScrollWithMouse, NO_DOCK)
+    undock_next()
+    if imgui.Begin('ABYHUB##abyhub_hud', state.visible, flags) then
+        local pushed = hud.push_body_font()
+        hud.render()
+        hud.pop_body_font(pushed)
+    end
+    imgui.End()
+    imgui.PopStyleColor(1)
+    imgui.PopStyleVar(2)
+    pop_style()
+end
+
 ashita.events.register('d3d_present', 'abyhub_present_cb', function()
+    -- the sidebar window uses the charcoal look; the classic window stays VanaCore
+    T.set_look(state.hud_mode and 'mono' or false)
+    ui.side_nav = state.hud_mode
     track_visitant_zone()
     update_vana_time()
     update_target()
@@ -2770,6 +2897,7 @@ ashita.events.register('d3d_present', 'abyhub_present_cb', function()
     render_lights_window()
 
     if not state.visible[1] then return end
+    if state.hud_mode then render_hud_window(); return end
 
     push_style()
     local font_pushed = T.push_font()
@@ -2843,6 +2971,10 @@ ashita.events.register('d3d_present', 'abyhub_present_cb', function()
         local scrolling = (win.content_h or 0) > (tonumber(wh) or 0) - PAD_Y * 2
         local cw = math.max(min_cw, (tonumber(ww) or fit_w) - PAD_X * 2 - (scrolling and SCROLL_W or 0))
         T.draw_window_frame()
+        do  -- the window's thin top light (crafthub's glass panel)
+            local wx0, wy0 = call(imgui.GetWindowPos)
+            if tonumber(wx0) and tonumber(ww) then T.window_light(wx0, wy0, ww, 12) end
+        end
         T.begin_content(cw)
         render_header()
         if (state.search[1] or ''):find('%S') then
@@ -2882,6 +3014,7 @@ end)
 
 ashita.events.register('load', 'abyhub_load_cb', function()
     T.load_font()
+    hud.load_fonts()
     init_vana_time()
     load_settings()
     empy.load()

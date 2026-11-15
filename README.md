@@ -1,6 +1,6 @@
 # abyhub
 
-An Abyssea + Empyrean toolkit addon for **Ashita v4** (Final Fantasy XI), styled after VanaCore (flat navy, periwinkle accent, Segoe UI).
+An Abyssea + Empyrean toolkit addon for **Ashita v4** (Final Fantasy XI), in the same design as crafthub: a see-through navy glass window with dark glass cards, a periwinkle accent and Segoe UI, styled after VanaCore.
 
 ## Install
 
@@ -48,6 +48,7 @@ Drag either window by any empty part of it. Resize the main window from its bott
 /aby alerts [target|any|off]  stagger popups
 /aby test [red|yellow|blue|white]    test a stagger popup
 /aby reset                    re-centre and re-fit the window
+/aby hud | classic            switch between the main window and the sidebar window
 /aby help                     list commands
 
 /abylights                    auto lights bar on / off
@@ -67,6 +68,7 @@ Drag either window by any empty part of it. Resize the main window from its bott
 |---|---|
 | `abyhub.lua` | main addon: windows, commands, Abyssea tabs, lights, stagger popups |
 | `abyempy.lua` | Empyrean tab |
+| `abyhud.lua` | the sidebar window (`/aby hud`) |
 | `abytheme.lua` | drawing / colours (edit the `HUD` table to recolour) |
 | `abyicons.lua` | item icons for Empyrean armour and weapons, read from the game's own item data (brightened and sharpened) |
 | `abyatma.lua` | atma names, sources and effects |

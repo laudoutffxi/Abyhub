@@ -1689,7 +1689,10 @@ function M.render()
             { 2, 'NMS' },
             { 3, 'WEAPONS', nw > 0 and tostring(nw) or nil },
         }
-        local p, tw, th = seg_tabs('empy_tab', tabs, state.tab, x, y, HUD.gold, true)
+        local p, tw, th = nil, 0, lh + 10
+        if not ui.side_nav then   -- the sidebar picks Armor / NMs / Weapons when it is on
+            p, tw, th = seg_tabs('empy_tab', tabs, state.tab, x, y, HUD.gold, true)
+        end
         if p and p ~= state.tab then state.tab = p; save_settings() end
 
         -- job pill on the right (click for the job picker)
@@ -1708,6 +1711,14 @@ function M.render()
     if state.tab == 2 then render_nms()
     elseif state.tab == 3 then VT.weapons(player_zone_name())
     else VT.armor() end
+end
+
+-- The sidebar's Armor / NMs / Weapons entries.
+function M.get_tab() return state.tab end
+function M.set_tab(n) if n ~= state.tab then state.tab = n; save_settings() end end
+function M.tab_counts()
+    local d, t = set_progress()
+    return d, t, weapons_held()
 end
 
 -- /aby armor | nms | weapons [stages|completed] | job <JOB|auto> | refresh | compact
