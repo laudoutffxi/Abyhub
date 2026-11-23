@@ -433,6 +433,10 @@ local BLUE = {
     {'Piercing', 'Archery', 'Blast Arrow', 200},
     {'Piercing', 'Archery', 'Arching Arrow', 225},
     {'Piercing', 'Archery', 'Empyreal Arrow', 250},
+    {'Piercing', 'Marksmanship', 'Slug Shot', 175},
+    {'Piercing', 'Marksmanship', 'Blast Shot', 200},
+    {'Piercing', 'Marksmanship', 'Heavy Shot', 225},
+    {'Piercing', 'Marksmanship', 'Detonator', 250},
 
     {'Slashing', 'Sword', 'Vorpal Blade', 200},
     {'Slashing', 'Sword', 'Swift Blade', 225},
@@ -460,6 +464,11 @@ local BLUE = {
     {'Blunt', 'Club', 'Judgment', 200},
     {'Blunt', 'Club', 'Hexa Strike', 220},
     {'Blunt', 'Club', 'Black Halo', 230},
+    {'Blunt', 'Staff', 'Heavy Swing', 5},
+    {'Blunt', 'Staff', 'Shell Crusher', 175},
+    {'Blunt', 'Staff', 'Full Swing', 200},
+    {'Blunt', 'Staff', 'Spirit Taker', 215},
+    {'Blunt', 'Staff', 'Retribution', 230},
 };
 
 local YELLOW = {
